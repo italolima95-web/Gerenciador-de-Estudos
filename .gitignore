@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-server/
+release/
+.data/
+public/ocr/
+coverage/
+*.log
+
+playwright-report/
+test-results/
+
+public/pdf-assets/
