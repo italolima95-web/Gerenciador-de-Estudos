@@ -1,3 +1,5 @@
+import { syllabusComparison } from '../../shared/comparison';
+import { coverageLabels } from './Curriculum';
 import { useEffect, useRef, useState } from 'react';
 import {
   Upload,
@@ -23,7 +25,7 @@ import { api, send, pct, formatDate } from '../lib/api';
 import { extractPdf, ocrCanvas, pdfjs, textFromContent, pdfOptions } from '../lib/pdf';
 import { factLabels, type ExtractedFact, type ExtractedTopic } from '../../shared/analyzer';
 import { dayKey, readPages, libraryProgress } from '../../shared/domain';
-import type { Document, Fact } from '../../shared/types';
+import type { Document, Fact, SyllabusItem } from '../../shared/types';
 import { topicOptions } from './Curriculum';
 import { Button, Card, PageTitle, Empty, Modal, Editor, Badge, Progress } from './UI';
 export function ImportPdf({
@@ -104,7 +106,7 @@ export function ImportPdf({
             </select>
           </label>
           <label className="field">
-            Concurso
+            Plano / concurso
             <select
               required={kind !== 'material'}
               value={contestId}
@@ -317,9 +319,9 @@ export function NoticeAnalysis() {
   if (!contest)
     return (
       <Empty
-        title="Primeiro, cadastre seu concurso"
-        description="Os documentos e o conteúdo extraído serão vinculados ao objetivo selecionado."
-        action={<Button onClick={() => navigate('Meus Concursos')}>Meus concursos</Button>}
+        title="Comece pelas suas disciplinas"
+        description="O edital é opcional. Cadastre primeiro suas disciplinas; depois, compare o conteúdo do documento com seus estudos."
+        action={<Button onClick={() => navigate('Disciplinas')}>Cadastrar disciplinas</Button>}
       />
     );
   const docs = state.documents.filter((d) => d.contest_id === contest.id && d.kind !== 'material'),
@@ -507,10 +509,56 @@ export function NoticeAnalysis() {
           </Button>
         </Card>
       )}
+      {!!syllabusComparison(state, contest.id).length && (
+        <Card title="Conteúdo programático × meus estudos" className="section-gap">
+          <p>
+            A comparação considera apenas os conteúdos selecionados do edital. Uma disciplina
+            estudada de forma geral não conclui automaticamente seus tópicos.
+          </p>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Disciplina / tópico exigido</th>
+                  <th>Meus estudos</th>
+                  <th>Origem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {syllabusComparison(state, contest.id).map((row) => (
+                  <tr key={row.item.id}>
+                    <td>
+                      {row.path.join(' › ')}
+                      <SyllabusMatch item={row.item} />
+                    </td>
+                    <td>
+                      {coverageLabels[row.status as keyof typeof coverageLabels]}
+                      {!row.topic && ' · sem tópico associado'}
+                      {row.topic && !row.topic.verified && (
+                        <small className="table-sub">Confira a extração com o original</small>
+                      )}
+                    </td>
+                    <td>
+                      <button
+                        className="text-link"
+                        onClick={() =>
+                          openDocument(row.item.document_id, row.item.page, row.item.excerpt)
+                        }
+                      >
+                        Página {row.item.page}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
       <Card title="3. Confira as informações e alterações" className="section-gap">
         <p className="muted">
           Cada confirmação atualiza o concurso e guarda a alteração no histórico. Campos ausentes:
-          Não informado.
+          Não identificado automaticamente — consulte o original.
         </p>
         <div className="table-scroll">
           <table>
@@ -529,7 +577,7 @@ export function NoticeAnalysis() {
                   return (
                     <tr key={field}>
                       <td>{label}</td>
-                      <td className="muted">Não informado</td>
+                      <td className="muted">Não identificado automaticamente</td>
                       <td>—</td>
                       <td>—</td>
                     </tr>
@@ -543,7 +591,14 @@ export function NoticeAnalysis() {
                       )}
                     </td>
                     <td>
-                      {f.value}
+                      {field === 'exam_date' && /^\d{4}-\d{2}-\d{2}$/.test(f.value)
+                        ? formatDate(f.value)
+                        : f.value}
+                      {rows.filter((r) => r.status !== 'rejected').length > 1 && (
+                        <small className="warning-text">
+                          Mais de um valor encontrado: confira o documento e eventuais retificações.
+                        </small>
+                      )}
                       <small className="table-sub">
                         Confiança: {pct(f.confidence * 100)}
                         {f.status === 'pending' ? ' · Informação não confirmada' : ''}
@@ -1006,6 +1061,60 @@ export function Reader({
           }}
         />
       )}
+    </div>
+  );
+}
+
+function SyllabusMatch({ item }: { item: SyllabusItem }) {
+  const { state, mutate } = useApp();
+  const [editing, setEditing] = useState(false),
+    [topicId, setTopicId] = useState(item.topic_id || '');
+  if (!editing)
+    return (
+      <div>
+        <Button variant="ghost" onClick={() => setEditing(true)}>
+          Associar a um tópico dos meus estudos
+        </Button>
+      </div>
+    );
+  return (
+    <div className="row-actions">
+      <select
+        aria-label={`Associar ${item.title}`}
+        value={topicId}
+        onChange={(e) => setTopicId(e.target.value)}
+      >
+        <option value="">Selecione um conteúdo equivalente</option>
+        {state.topics
+          .filter(
+            (t) =>
+              t.contest_id === item.contest_id &&
+              (t.kind === 'discipline') === (item.kind === 'discipline'),
+          )
+          .map((t) => (
+            <option key={t.id} value={t.id}>
+              {
+                topicOptions(state.topics, item.contest_id, false).find((o) => o.value === t.id)
+                  ?.label
+              }
+            </option>
+          ))}
+      </select>
+      <Button
+        disabled={!topicId}
+        onClick={async () => {
+          const saved = await mutate(
+            () => send(`/syllabus/${item.id}`, { topic_id: topicId }, 'PUT'),
+            'Correspondência confirmada',
+          );
+          if (saved) setEditing(false);
+        }}
+      >
+        Confirmar associação
+      </Button>
+      <Button variant="ghost" onClick={() => setEditing(false)}>
+        Cancelar
+      </Button>
     </div>
   );
 }

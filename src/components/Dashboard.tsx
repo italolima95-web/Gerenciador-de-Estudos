@@ -1,3 +1,4 @@
+import { syllabusCoverage } from '../../shared/comparison';
 import { useState } from 'react';
 import {
   ArrowUpRight,
@@ -54,6 +55,14 @@ export function Recommendations({ limit = 5 }: { limit?: number }) {
                   ))}
                 </div>
                 <div className="recommendation-actions">
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      openDocument(r.source.document_id, r.source.page, r.source.excerpt)
+                    }
+                  >
+                    Ver exigência no edital
+                  </Button>
                   <Button variant="ghost" onClick={() => navigate('Revisões')}>
                     Revisar
                   </Button>
@@ -118,12 +127,16 @@ export function Recommendations({ limit = 5 }: { limit?: number }) {
       ) : (
         <div className="subtle-empty">
           <Target size={23} />
-          <p>As prioridades aparecem conforme você cadastra tópicos e registra estudos.</p>
+          <p>
+            Sem lacunas identificadas. Se ainda não adicionou um edital, cadastre suas disciplinas e
+            estude normalmente; a comparação será habilitada após a análise do conteúdo
+            programático.
+          </p>
         </div>
       )}
       <p className="footnote">
-        Regras: cobertura, amostra de questões, meta, revisões, pesos e proximidade da prova.
-        Nenhuma recomendação altera seu ciclo automaticamente.
+        Comparação exclusiva entre os tópicos do conteúdo programático do edital e os estudos
+        registrados. Nenhuma recomendação altera seu ciclo automaticamente.
       </p>
     </div>
   );
@@ -135,7 +148,7 @@ export default function Dashboard() {
     [questions, setQuestions] = useState(false);
   const today = dayKey();
   const topics = state.topics.filter((t) => t.contest_id === contest?.id),
-    cov = coverage(topics, state.mappings, state.readings);
+    cov = syllabusCoverage(state, contest?.id || '');
   const stats = statistics(state.attempts, state.attempt_links, state.topics, {
     contestId: contest?.id || '',
   });
@@ -195,14 +208,14 @@ export default function Dashboard() {
                 ? `${state.topics.find((t) => t.id === block.topic_id)?.title || contest.name} · ${duration(block.minutes)} de ${block.kind === 'theory' ? 'teoria' : block.kind === 'questions' ? 'questões' : 'estudo'}`
                 : rec
                   ? 'Uma prioridade sugerida com base nos seus registros.'
-                  : 'Cadastre as disciplinas do edital e monte seu primeiro ciclo de estudos.'
-              : 'Organize seus concursos, estude com intenção e acompanhe cada avanço. Tudo no seu próprio ritmo.'}
+                  : 'Cadastre as disciplinas que você estuda e monte seu ciclo. O edital é opcional.'
+              : 'Comece pelas suas disciplinas, monte um ciclo e registre seus estudos. Depois, se desejar, adicione um edital para comparar o conteúdo.'}
           </p>
           <div className="hero-actions">
             <button
               className="hero-button"
               onClick={() => {
-                if (!contest) setNewContest(true);
+                if (!contest) navigate('Disciplinas');
                 else navigate(block ? 'Meu Ciclo' : 'Disciplinas');
               }}
             >
@@ -211,9 +224,14 @@ export default function Dashboard() {
                 ? block
                   ? 'Iniciar estudo'
                   : 'Organizar meus estudos'
-                : 'Cadastrar meu primeiro concurso'}
+                : 'Cadastrar minhas disciplinas'}
               <ArrowUpRight size={17} />
             </button>
+            {!contest && (
+              <button className="hero-secondary" onClick={() => setNewContest(true)}>
+                Cadastrar meu primeiro concurso
+              </button>
+            )}
             {lastDoc && (
               <button
                 className="hero-secondary"
@@ -319,9 +337,11 @@ export default function Dashboard() {
                           ? 'Teoria'
                           : b.kind === 'questions'
                             ? 'Questões'
-                            : b.kind === 'review'
-                              ? 'Revisão'
-                              : 'Simulado'}{' '}
+                            : b.kind === 'cycle_questions'
+                              ? 'Exercícios do Ciclo'
+                              : b.kind === 'review'
+                                ? 'Revisão'
+                                : 'Simulado'}{' '}
                         · {duration(b.minutes)}
                       </small>
                     </div>
@@ -338,16 +358,18 @@ export default function Dashboard() {
                 {[
                   {
                     n: '01',
-                    title: 'Defina seu objetivo',
-                    text: 'Cadastre o concurso e a data da prova.',
-                    done: !!contest,
-                    action: () => setNewContest(true),
+                    title: 'Escolha suas disciplinas',
+                    text: 'Cadastre o que você já está estudando.',
+                    done: topics.length > 0,
+                    action: () => navigate('Disciplinas'),
                   },
                   {
                     n: '02',
-                    title: 'Conheça o caminho',
-                    text: 'Importe o edital e confira os conteúdos.',
-                    done: topics.length > 0,
+                    title: 'Compare com um edital, se desejar',
+                    text: 'Etapa opcional: confira o conteúdo exigido.',
+                    done: !!state.syllabus_items?.some(
+                      (i) => i.contest_id === contest?.id && i.active,
+                    ),
                     action: () => navigate('Analisar Edital'),
                   },
                   {

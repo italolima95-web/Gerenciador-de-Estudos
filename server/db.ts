@@ -40,7 +40,26 @@ CREATE INDEX IF NOT EXISTS reviews_due ON reviews(due_date);
 CREATE INDEX IF NOT EXISTS readings_doc ON readings(document_id);
 INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,datetime('now'));
 `;
-const jsonColumns = new Set(['metadata', 'text_pages', 'outline', 'tags']);
+export function migrateDatabase(db: Database) {
+  db.run(migration);
+  const version = Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0]?.values[0]?.[0]);
+  if (version > 2) throw Error('Banco criado por uma versão mais recente do programa');
+  if (version === 2) return;
+  db.run(`BEGIN;
+    ALTER TABLE contests ADD COLUMN kind TEXT NOT NULL DEFAULT 'contest';
+    ALTER TABLE sessions ADD COLUMN block_id TEXT REFERENCES blocks(id) ON DELETE SET NULL;
+    ALTER TABLE sessions ADD COLUMN cycle_lap INTEGER;
+    ALTER TABLE sessions ADD COLUMN cycle_kind TEXT;
+    CREATE TABLE syllabus_items(id TEXT PRIMARY KEY, contest_id TEXT NOT NULL REFERENCES contests(id), document_id TEXT NOT NULL REFERENCES documents(id), topic_id TEXT REFERENCES topics(id) ON DELETE SET NULL, parent_id TEXT REFERENCES syllabus_items(id), kind TEXT NOT NULL, title TEXT NOT NULL, page INTEGER NOT NULL, section TEXT NOT NULL, excerpt TEXT NOT NULL, confidence REAL NOT NULL, active INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE cycle_completions(id TEXT PRIMARY KEY, contest_id TEXT NOT NULL REFERENCES contests(id), block_id TEXT REFERENCES blocks(id) ON DELETE SET NULL, topic_id TEXT REFERENCES topics(id) ON DELETE SET NULL, lap INTEGER NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, topic_path TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE INDEX syllabus_contest ON syllabus_items(contest_id,active);
+    CREATE INDEX completions_lap ON cycle_completions(contest_id,lap);
+    INSERT INTO syllabus_items SELECT t.id,t.contest_id,t.source_document_id,t.id,NULL,t.kind,t.title,t.source_page,t.source_section,t.source_excerpt,t.confidence,1 FROM topics t JOIN documents d ON d.id=t.source_document_id WHERE d.kind<>'material' AND t.source_page IS NOT NULL;
+    UPDATE syllabus_items SET parent_id=(SELECT t.parent_id FROM topics t WHERE t.id=syllabus_items.topic_id) WHERE (SELECT t.parent_id FROM topics t WHERE t.id=syllabus_items.topic_id) IN (SELECT id FROM syllabus_items);
+    INSERT INTO schema_migrations VALUES(2,datetime('now'));
+    COMMIT;`);
+}
+const jsonColumns = new Set(['metadata', 'text_pages', 'outline', 'tags', 'topic_path']);
 export class Store {
   db!: Database;
   SQL!: SqlJsStatic;
@@ -60,7 +79,16 @@ export class Store {
       ? new this.SQL.Database(readFileSync(this.file))
       : new this.SQL.Database();
     this.db.run('PRAGMA foreign_keys=ON');
-    this.db.run(migration);
+    // Keep the original v1 database before any schema change; PDFs remain in files/.
+    if (
+      existsSync(this.file) &&
+      !this.db.exec("SELECT name FROM sqlite_master WHERE name='syllabus_items'").length
+    )
+      copyFileSync(
+        this.file,
+        path.join(this.dataDir, 'backups', `antes-atualizacao-${Date.now()}.sqlite`),
+      );
+    migrateDatabase(this.db);
     this.persist();
     this.autoBackup();
     return this;

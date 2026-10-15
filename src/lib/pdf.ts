@@ -11,14 +11,25 @@ export const pdfOptions = {
 };
 export function textFromContent(items: unknown[]) {
   let result = '',
-    lastY: number | undefined;
+    lastY: number | undefined,
+    lastEnd: number | undefined;
   for (const value of items) {
-    const item = value as { str?: string; hasEOL?: boolean; transform?: number[] };
+    const item = value as { str?: string; hasEOL?: boolean; width?: number; transform?: number[] };
     if (typeof item.str !== 'string') continue;
     const y = item.transform?.[5];
     if (lastY !== undefined && y !== undefined && Math.abs(lastY - y) > 3 && !result.endsWith('\n'))
       result += '\n';
+    const x = item.transform?.[4];
+    if (
+      x !== undefined &&
+      lastEnd !== undefined &&
+      y === lastY &&
+      x - lastEnd > 18 &&
+      !result.endsWith('\n')
+    )
+      result += '\t';
     result += item.str + (item.hasEOL ? '\n' : ' ');
+    lastEnd = x === undefined ? undefined : x + (item.width || 0);
     lastY = y;
   }
   return result.trim();

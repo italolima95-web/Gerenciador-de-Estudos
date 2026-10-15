@@ -31,7 +31,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release/downloads
-          cp 'release/Cronograma de Estudos 1.0.0.exe' release/downloads/Cronograma-de-Estudos-Windows-x64.exe
+          app_version="$(node -p "require('./package.json').version")"
+          cp "release/Cronograma de Estudos ${app_version}.exe" release/downloads/Cronograma-de-Estudos-Windows-x64.exe
           python3 - <<'PY'
           import zipfile
           with zipfile.ZipFile('release/downloads/cronograma-windows.zip', 'w', compression=zipfile.ZIP_STORED) as archive:

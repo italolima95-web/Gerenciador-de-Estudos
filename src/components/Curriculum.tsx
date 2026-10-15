@@ -1,3 +1,5 @@
+import { disciplineCatalog, disciplineKey } from '../../shared/catalog';
+import { syllabusCoverage } from '../../shared/comparison';
 import { useState } from 'react';
 import {
   Plus,
@@ -24,6 +26,7 @@ import {
   Editor,
   Badge,
   Progress,
+  Modal,
   type Field,
   type Values,
 } from './UI';
@@ -48,6 +51,7 @@ export function topicOptions(topics: Topic[], contestId: string, includeEmpty = 
 }
 export default function Curriculum() {
   const { state, contest, mutate, refresh, notify, openDocument, navigate } = useApp();
+  const [catalog, setCatalog] = useState(false);
   const [editing, setEditing] = useState<Topic | 'new'>(),
     [parent, setParent] = useState<Topic>(),
     [expanded, setExpanded] = useState<Set<string>>(new Set()),
@@ -56,14 +60,16 @@ export default function Curriculum() {
     [mapTopic, setMapTopic] = useState<Topic>();
   if (!contest)
     return (
-      <Empty
-        title="Selecione um concurso"
-        description="O conteúdo programático será organizado por concurso e cargo."
-        action={<Button onClick={() => navigate('Meus Concursos')}>Cadastrar concurso</Button>}
-      />
+      <>
+        <PageTitle
+          title="Minhas disciplinas"
+          description="Comece pelas disciplinas que você estuda. O edital pode ser incluído depois, se desejar."
+        />
+        <DisciplineCatalog onClose={() => {}} inline />
+      </>
     );
   const topics = state.topics.filter((t) => t.contest_id === contest.id),
-    cov = coverage(topics, state.mappings, state.readings);
+    cov = syllabusCoverage(state, contest.id);
   const filtered = (t: Topic): boolean => {
     const own =
       t.title.toLocaleLowerCase().includes(search.toLocaleLowerCase()) &&
@@ -86,7 +92,7 @@ export default function Curriculum() {
       type: 'number',
       min: 0.01,
       max: 100,
-      step: 0.1,
+      step: 0.01,
       required: true,
     },
     {
@@ -106,7 +112,7 @@ export default function Curriculum() {
         { value: 'again', label: 'Precisa de nova revisão' },
       ],
     },
-    { key: 'verified', label: 'Informação conferida com o edital', type: 'checkbox' },
+    { key: 'verified', label: 'Cadastro manual validado / extração conferida', type: 'checkbox' },
   ];
   const render = (t: Topic, level = 0) => {
     const children = topics.filter((c) => c.parent_id === t.id && filtered(c)),
@@ -257,18 +263,23 @@ export default function Curriculum() {
     <>
       <PageTitle
         eyebrow="CONTEÚDO PROGRAMÁTICO"
-        title="Do edital ao domínio"
-        description="Acompanhe teoria, revisão e questões sem confundir leitura com aprendizado."
+        title="Minhas disciplinas"
+        description="Cadastre suas disciplinas e tópicos. Se desejar, adicione um edital para comparar o conteúdo exigido com seus estudos."
         action={
-          <Button
-            onClick={() => {
-              setParent(undefined);
-              setEditing('new');
-            }}
-          >
-            <Plus size={17} />
-            Nova disciplina
-          </Button>
+          <div className="row-actions">
+            <Button variant="secondary" onClick={() => setCatalog(true)}>
+              Escolher disciplinas
+            </Button>
+            <Button
+              onClick={() => {
+                setParent(undefined);
+                setEditing('new');
+              }}
+            >
+              <Plus size={17} />
+              Nova disciplina
+            </Button>
+          </div>
         }
       />
       <Card className="coverage-summary">
@@ -284,7 +295,11 @@ export default function Curriculum() {
           <div className="legend">
             <span>{cov.partial} parciais</span>
             <span>{cov.pending} pendentes</span>
-            <span>{cov.missing} sem material validado</span>
+            <span>
+              {cov.total
+                ? 'Somente tópicos exigidos no edital'
+                : 'Edital opcional: ainda não cadastrado'}
+            </span>
           </div>
         </div>
       </Card>
@@ -323,10 +338,10 @@ export default function Curriculum() {
       ) : (
         <Empty
           title="Construa seu mapa de estudos"
-          description="Importe o conteúdo de um edital ou cadastre disciplinas, assuntos e subassuntos manualmente."
+          description="Escolha as disciplinas que está estudando e inclua seus tópicos. Você pode acrescentar um edital depois."
           action={
-            <Button onClick={() => navigate('Analisar Edital')}>
-              Analisar edital
+            <Button onClick={() => setCatalog(true)}>
+              Escolher disciplinas
               <ArrowIcon />
             </Button>
           }
@@ -336,6 +351,7 @@ export default function Curriculum() {
         <AlertCircle size={14} />A cobertura usa os tópicos finais da hierarquia. Leitura parcial
         permanece parcial; apenas associações confirmadas aproveitam páginas já estudadas.
       </p>
+      {catalog && <DisciplineCatalog onClose={() => setCatalog(false)} />}
       {editing && (
         <Editor
           title={
@@ -420,4 +436,96 @@ export default function Curriculum() {
 }
 function ArrowIcon() {
   return <ChevronRight size={16} />;
+}
+
+export function DisciplineCatalog({
+  onClose,
+  inline = false,
+}: {
+  onClose: () => void;
+  inline?: boolean;
+}) {
+  const { state, contest, refresh, select, notify } = useApp();
+  const [chosen, setChosen] = useState<string[]>([]),
+    [custom, setCustom] = useState(''),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  const existing = state.topics.filter(
+    (t) => t.contest_id === contest?.id && t.kind === 'discipline',
+  );
+  const content = (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError('');
+        try {
+          const titles = [...chosen, ...(custom.trim() ? [custom.trim()] : [])];
+          if (!titles.length) throw Error('Escolha ao menos uma disciplina ou informe uma nova.');
+          const contextId = contest?.id || (await send<{ id: string }>('/study-plan', {})).id;
+          await send('/disciplines', { contest_id: contextId, titles });
+          await refresh();
+          select(contextId);
+          notify('Disciplinas cadastradas. Inclua os tópicos que você estuda.');
+          onClose();
+        } catch (e) {
+          setError((e as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <p>
+        Marque apenas as disciplinas que você está estudando. Exercícios do Ciclo e SIMULADO estão
+        disponíveis como atividades ao adicionar blocos ao ciclo.
+      </p>
+      <div className="catalog-grid">
+        {disciplineCatalog.map((title) => {
+          const added = existing.some((t) => disciplineKey(t.title) === disciplineKey(title));
+          return (
+            <label className="check-row" key={title}>
+              <input
+                type="checkbox"
+                disabled={added || busy}
+                checked={added || chosen.includes(title)}
+                onChange={(e) =>
+                  setChosen((old) =>
+                    e.target.checked ? [...old, title] : old.filter((t) => t !== title),
+                  )
+                }
+              />
+              {title}
+              {added ? ' · cadastrada' : ''}
+            </label>
+          );
+        })}
+      </div>
+      <label className="field">
+        Outra disciplina
+        <input
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          maxLength={500}
+          placeholder="Digite uma disciplina que não está na lista"
+        />
+      </label>
+      {error && (
+        <p role="alert" className="warning-text">
+          {error}
+        </p>
+      )}
+      <div className="modal-actions">
+        <Button type="submit" disabled={busy}>
+          {busy ? 'Salvando…' : 'Cadastrar disciplinas'}
+        </Button>
+      </div>
+    </form>
+  );
+  return inline ? (
+    <Card title="1. Escolha suas disciplinas">{content}</Card>
+  ) : (
+    <Modal title="Escolher disciplinas" onClose={onClose}>
+      {content}
+    </Modal>
+  );
 }

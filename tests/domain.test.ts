@@ -284,7 +284,7 @@ describe('Análise documental conservadora', () => {
   it('não inventa fatos ausentes e rotula incerteza', () => {
     const a = analyzeNotice(pages);
     expect(a.facts.some((f) => f.field === 'salary')).toBe(false);
-    expect(a.facts.find((f) => f.field === 'exam_date')?.value).toBe('20/12/2026');
+    expect(a.facts.find((f) => f.field === 'exam_date')?.value).toBe('2026-12-20');
     expect(a.warning).toContain('não confirmada');
   });
   it('filtra conteúdo por cargo sem eliminar conteúdos comuns', () => {
@@ -305,12 +305,10 @@ describe('Análise documental conservadora', () => {
     ).toMatchObject({ confirmed: 0, start_page: 1 }));
 });
 describe('Recomendações e planejamento', () => {
-  it('não rotula como baixo desempenho uma amostra de cinco questões', () => {
+  it('não gera atenção de desempenho para conteúdos manuais sem edital', () => {
     const t = topic('t', null, 'subject', { coverage: 'studied' }),
       s = state({ topics: [t], attempts: [attempt('a', 1, 4)], attempt_links: [link('a', 't')] });
-    const rec = recommendations(s, contest)[0];
-    expect(rec.reasons.join(' ')).toContain('Amostra insuficiente');
-    expect(rec.reasons.join(' ')).not.toContain('meta de');
+    expect(recommendations(s, contest)).toEqual([]);
   });
   it('respeita descansos ao estimar disponibilidade', () => {
     const p = planning(contest, [topic('t')], [], [], '2026-10-15');

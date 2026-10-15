@@ -1,3 +1,4 @@
+import { syllabusComparison } from './comparison.js';
 import type {
   Attempt,
   AttemptLink,
@@ -173,66 +174,28 @@ export function reviewStats(reviews: Review[], today = dayKey(), from?: string, 
     percent: rows.length ? (done / rows.length) * 100 : null,
   };
 }
-export function recommendations(state: State, contest: Contest, today = dayKey()) {
-  const topics = state.topics.filter((t) => t.contest_id === contest.id);
-  return leafTopics(topics)
-    .map((t) => {
-      const stats = statistics(state.attempts, state.attempt_links, topics, {
+export function recommendations(state: State, contest: Contest, _today = dayKey()) {
+  return syllabusComparison(state, contest.id)
+    .filter((r) => r.topic && r.status !== 'studied')
+    .map((r) => ({
+      topic: r.topic!,
+      stats: statistics(state.attempts, state.attempt_links, state.topics, {
         contestId: contest.id,
-        topicId: t.id,
-      });
-      const c = effectiveCoverage(t, state.mappings, state.readings);
-      const due = state.reviews.filter(
-        (r) => r.topic_id === t.id && !r.completed_at && r.due_date <= today,
-      ).length;
-      const reasons: string[] = [];
-      let score = 0;
-      if (c !== 'studied') {
-        reasons.push(
-          c === 'partial' ? 'Cobertura teórica parcial' : 'Conteúdo ainda não concluído',
-        );
-        score += c === 'partial' ? 25 : 35;
-      }
-      if (
-        stats.answered >= contest.min_sample &&
-        stats.accuracy !== null &&
-        stats.accuracy < contest.target
-      ) {
-        reasons.push(
-          `${stats.accuracy.toFixed(1)}% em ${stats.answered} questões; meta de ${contest.target}%`,
-        );
-        score += (contest.target - stats.accuracy) * 1.2;
-      }
-      if (stats.answered < contest.min_sample) {
-        reasons.push(`Amostra insuficiente: ${stats.answered}/${contest.min_sample} questões`);
-        score += 5;
-      }
-      if (due) {
-        reasons.push(`${due} revisão(ões) pendente(s)`);
-        score += due * 15;
-      }
-      const discipline = ancestry(topics, t.id)[0];
-      score *= Math.max(0.1, t.weight) * (discipline?.weight || 1);
-      if (contest.exam_date) {
-        const days = Math.ceil(
-          (new Date(contest.exam_date + 'T12:00:00').getTime() -
-            new Date(today + 'T12:00:00').getTime()) /
-            86400000,
-        );
-        if (days >= 0 && days <= 30 && c !== 'studied') score *= 1.3;
-      }
-      return {
-        topic: t,
-        stats,
-        reasons,
-        score,
-        action: c === 'studied' ? 'Revisar e resolver questões' : 'Estudar conteúdo',
-      };
-    })
+        topicId: r.topic!.id,
+      }),
+      reasons: [
+        r.path.join(' › '),
+        r.status === 'partial'
+          ? 'Conteúdo do edital parcialmente estudado'
+          : 'Conteúdo do edital sem conclusão registrada',
+        `Edital · página ${r.item.page}`,
+      ],
+      score: r.status === 'partial' ? 1 : 2,
+      action: r.status === 'partial' ? 'Concluir conteúdo' : 'Estudar conteúdo',
+      source: r.item,
+    }))
     .filter(
-      (r) =>
-        r.score > 0 &&
-        !((state.preferences.ignored_recommendations as string[]) || []).includes(r.topic.id),
+      (r) => !((state.preferences.ignored_recommendations as string[]) || []).includes(r.topic.id),
     )
     .sort((a, b) => b.score - a.score);
 }

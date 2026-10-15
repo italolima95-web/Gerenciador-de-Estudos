@@ -12,9 +12,10 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { zipSync, unzipSync, strToU8 } from 'fflate';
-import { Store, id } from './db.js';
+import { Store, id, migrateDatabase } from './db.js';
+import { disciplineKey, normalizeTitle } from '../shared/catalog.js';
 import { analyzeNotice, suggestMatches } from '../shared/analyzer.js';
-import { addDays, dayKey, descendants, statistics } from '../shared/domain.js';
+import { addDays, dayKey, descendants, statistics, ancestry } from '../shared/domain.js';
 import type {
   Contest,
   Document,
@@ -40,6 +41,7 @@ const positive = z.number().int().min(1).max(100000),
   count = z.number().int().min(0).max(1000000),
   minutes = z.number().min(0).max(100000);
 const contestSchema = z.object({
+  kind: z.enum(['plan', 'contest']).default('contest'),
   name: short.min(1),
   board: short.default(''),
   role: short.default(''),
@@ -129,15 +131,18 @@ const schemas = {
     topic_id: nullableId,
     title: short.min(1),
     minutes: positive.max(1440),
-    kind: z.enum(['theory', 'review', 'questions', 'mock']),
+    kind: z.enum(['theory', 'review', 'questions', 'mock', 'cycle_questions']),
     position: count.default(0),
   }),
   sessions: z.object({
+    block_id: nullableId,
+    cycle_lap: count.nullable().default(null),
+    cycle_kind: short.nullable().default(null),
     contest_id: uuid,
     topic_id: nullableId,
     date,
     minutes: minutes.refine((n) => n > 0),
-    kind: z.enum(['theory', 'review', 'questions', 'mock', 'pomodoro']),
+    kind: z.enum(['theory', 'review', 'questions', 'mock', 'pomodoro', 'cycle_questions']),
     notes: text.default(''),
     interrupted: z.number().min(0).max(1).default(0),
   }),
@@ -192,6 +197,12 @@ function validateEntity(s: Store, table: Table, v: Record<string, unknown>, key?
     const topic = requireRow<Topic>(s, 'topics', String(v.topic_id));
     if (v.contest_id && topic.contest_id !== v.contest_id) fail('Tópico pertence a outro concurso');
   }
+  if (table === 'sessions' && v.block_id) {
+    const block = requireRow<Block>(s, 'blocks', String(v.block_id));
+    if (block.contest_id !== v.contest_id) fail('Bloco pertence a outro plano');
+    if (v.cycle_lap === null) fail('Informe a volta do ciclo');
+    v.cycle_kind = block.kind;
+  }
   if (table === 'topics') {
     if (v.parent_id) {
       const p = requireRow<Topic>(s, 'topics', String(v.parent_id));
@@ -233,6 +244,8 @@ function fullState(s: Store): State {
     'attempt_links',
     'session_links',
     'cycles',
+    'syllabus_items',
+    'cycle_completions',
   ])
     result[table] = s.all(`SELECT * FROM ${table}`);
   result.documents = (result.documents as Document[]).map((d) => ({ ...d, text_pages: [] }));
@@ -270,6 +283,50 @@ export async function createApp(dataDir: string, frontendDir?: string) {
     res.json({ ok: true, database: store.one('PRAGMA integrity_check') }),
   );
   app.get('/api/state', (_req, res) => res.json(fullState(store)));
+  app.post('/api/study-plan', (_req, res) => {
+    const existing = store.one<Contest>(
+      "SELECT * FROM contests WHERE kind='plan' ORDER BY created_at LIMIT 1",
+    );
+    if (existing) return res.json({ id: existing.id });
+    const key = id(),
+      value = contestSchema.parse({ name: 'Meus estudos', kind: 'plan' });
+    store.transaction(() => {
+      if (!store.one('SELECT id FROM contests LIMIT 1')) value.main = 1;
+      store.insert('contests', { id: key, ...value, created_at: new Date().toISOString() });
+      store.audit('contests', key, 'plan_created', null, value);
+    });
+    res.status(201).json({ id: key });
+  });
+  app.post('/api/disciplines', (req, res) => {
+    const v = z
+      .object({ contest_id: uuid, titles: z.array(short.min(1)).min(1).max(100) })
+      .parse(req.body);
+    requireRow(store, 'contests', v.contest_id);
+    const existing = store.all<Topic>(
+      "SELECT * FROM topics WHERE contest_id=? AND kind='discipline'",
+      [v.contest_id],
+    );
+    const added: string[] = [];
+    store.transaction(() => {
+      for (const title of v.titles) {
+        if (existing.some((t) => disciplineKey(t.title) === disciplineKey(title))) continue;
+        const key = id(),
+          value = {
+            ...topicSchema.parse({ contest_id: v.contest_id, kind: 'discipline', title }),
+            source_document_id: null,
+            source_page: null,
+            source_section: '',
+            source_excerpt: '',
+            confidence: 1,
+          };
+        store.insert('topics', { id: key, ...value });
+        existing.push({ id: key, ...value } as Topic);
+        added.push(key);
+        store.audit('topics', key, 'created', null, value);
+      }
+    });
+    res.status(201).json({ ids: added });
+  });
   for (const table of tables) {
     app.post(`/api/${table}`, (req, res) => {
       const value = schemas[table].parse(req.body) as Record<string, unknown>;
@@ -323,7 +380,30 @@ export async function createApp(dataDir: string, frontendDir?: string) {
       if (req.body.confirm !== true) fail('Confirmação explícita necessária');
       const before = requireRow(store, table, String(req.params.id));
       store.transaction(() => {
+        if (
+          table === 'topics' &&
+          store.one('SELECT id FROM syllabus_items WHERE topic_id=? AND active=1', [req.params.id])
+        )
+          fail(
+            'Este conteúdo está associado ao edital. Ajuste a seleção do edital ou associe a exigência a outro tópico antes de excluir.',
+            409,
+          );
         if (table === 'blocks') {
+          const timerRow = store.one<{ value: string }>(
+            "SELECT value FROM preferences WHERE key='timer'",
+          );
+          const timer = timerRow ? (JSON.parse(timerRow.value) as Timer) : undefined;
+          if (timer?.block_id === req.params.id) {
+            if (timer.running || timer.elapsed > 0)
+              fail('Finalize a sessão do cronômetro antes de excluir o bloco.', 409);
+            store.preference('timer', {
+              ...timer,
+              block_id: null,
+              cycle_lap: null,
+              cycle_kind: null,
+              revision: timer.revision + 1,
+            });
+          }
           const block = before as unknown as Block;
           const next = store.one<Block>(
             'SELECT * FROM blocks WHERE contest_id=? AND id<>? ORDER BY position,id',
@@ -512,7 +592,8 @@ export async function createApp(dataDir: string, frontendDir?: string) {
   });
   app.post('/api/documents/:id/apply-analysis', (req, res) => {
     const d = requireRow<Document>(store, 'documents', String(req.params.id));
-    if (!d.contest_id) fail('Associe o edital a um concurso');
+    if (d.kind === 'material') fail('Materiais de estudo não definem exigências do edital');
+    if (!d.contest_id) fail('Associe o edital a um plano ou concurso');
     const contest = requireRow<Contest>(store, 'contests', d.contest_id!);
     const input = z
       .object({
@@ -522,7 +603,8 @@ export async function createApp(dataDir: string, frontendDir?: string) {
       })
       .parse(req.body);
     const analysis = analyzeNotice(d.text_pages, input.role);
-    const keys = new Map<string, string>();
+    const keys = new Map<string, string>(),
+      requirementKeys = new Map<string, string>();
     store.transaction(() => {
       for (const f of analysis.facts.filter((f) => input.fields.includes(f.field))) {
         if (
@@ -546,12 +628,23 @@ export async function createApp(dataDir: string, frontendDir?: string) {
           previous_value: String(previous),
         });
       }
+      if (analysis.topics.length)
+        store.run('UPDATE syllabus_items SET active=0 WHERE document_id=?', [d.id]);
       for (const t of analysis.topics.filter((t) => input.topicKeys.includes(t.key))) {
         if (t.parentKey && !keys.has(t.parentKey)) continue;
-        const existing = store.one<Topic>(
-          'SELECT * FROM topics WHERE contest_id=? AND title=? AND parent_id IS ?',
-          [contest.id, t.title, t.parentKey ? keys.get(t.parentKey) : null],
-        );
+        const parentId = t.parentKey ? keys.get(t.parentKey)! : null;
+        const existing = store
+          .all<Topic>('SELECT * FROM topics WHERE contest_id=? AND parent_id IS ?', [
+            contest.id,
+            parentId,
+          ])
+          .find(
+            (x) =>
+              x.kind === t.kind &&
+              (t.kind === 'discipline'
+                ? disciplineKey(x.title) === disciplineKey(t.title)
+                : normalizeTitle(x.title) === normalizeTitle(t.title)),
+          );
         const key = existing?.id || id();
         keys.set(t.key, key);
         if (!existing)
@@ -572,12 +665,45 @@ export async function createApp(dataDir: string, frontendDir?: string) {
             verified: 0,
             position: 0,
           });
+        const requirementId = id();
+        requirementKeys.set(t.key, requirementId);
+        store.insert('syllabus_items', {
+          id: requirementId,
+          contest_id: contest.id,
+          document_id: d.id,
+          topic_id: key,
+          parent_id: t.parentKey ? requirementKeys.get(t.parentKey) : null,
+          kind: t.kind,
+          title: t.title,
+          page: t.page,
+          section: t.section,
+          excerpt: t.excerpt,
+          confidence: t.confidence,
+          active: 1,
+        });
       }
       store.audit('documents', d.id, 'analysis_saved', null, {
         role: input.role,
         facts: input.fields,
         topics: input.topicKeys,
       });
+    });
+    res.json({ ok: true });
+  });
+  app.put('/api/syllabus/:id', (req, res) => {
+    const item = requireRow<import('../shared/types.js').SyllabusItem>(
+      store,
+      'syllabus_items',
+      String(req.params.id),
+    );
+    const v = z.object({ topic_id: uuid }).parse(req.body);
+    validateTopic(store, v.topic_id, item.contest_id);
+    const topic = requireRow<Topic>(store, 'topics', v.topic_id);
+    if ((item.kind === 'discipline') !== (topic.kind === 'discipline'))
+      fail('Associe disciplina com disciplina ou tópico com tópico');
+    store.transaction(() => {
+      store.update('syllabus_items', item.id, v);
+      store.audit('syllabus_items', item.id, 'manual_match', item, v);
     });
     res.json({ ok: true });
   });
@@ -676,7 +802,11 @@ export async function createApp(dataDir: string, frontendDir?: string) {
     const contestId = String(req.params.contestId);
     requireRow(store, 'contests', contestId);
     const v = z
-      .object({ completed: z.boolean(), expected_block_id: uuid.nullable() })
+      .object({
+        completed: z.boolean(),
+        expected_block_id: uuid.nullable(),
+        expected_lap: count.optional(),
+      })
       .parse(req.body);
     const blocks = store.all<Block>(
       'SELECT * FROM blocks WHERE contest_id=? ORDER BY position,id',
@@ -687,11 +817,32 @@ export async function createApp(dataDir: string, frontendDir?: string) {
       'SELECT * FROM cycles WHERE contest_id=?',
       [contestId],
     );
-    if (cycle && cycle.block_id !== v.expected_block_id)
+    if (
+      cycle &&
+      (cycle.block_id !== v.expected_block_id ||
+        (v.expected_lap !== undefined && cycle.lap !== v.expected_lap))
+    )
       fail('O bloco atual mudou. Atualize a tela antes de avançar.', 409);
     const index = blocks.findIndex((b) => b.id === cycle?.block_id),
       next = (index + 1) % blocks.length;
     store.transaction(() => {
+      const completedBlock = blocks[index < 0 ? 0 : index];
+      if (v.completed) {
+        const allTopics = store.all<Topic>('SELECT * FROM topics WHERE contest_id=?', [contestId]);
+        store.insert('cycle_completions', {
+          id: id(),
+          contest_id: contestId,
+          block_id: completedBlock.id,
+          topic_id: completedBlock.topic_id,
+          lap: cycle?.lap || 0,
+          kind: completedBlock.kind,
+          title: completedBlock.title,
+          topic_path: completedBlock.topic_id
+            ? ancestry(allTopics, completedBlock.topic_id).map((t) => t.title)
+            : [],
+          created_at: new Date().toISOString(),
+        });
+      }
       const lap = (cycle?.lap || 0) + (v.completed && next === 0 ? 1 : 0);
       store.run(
         'INSERT INTO cycles(contest_id,block_id,lap) VALUES(?,?,?) ON CONFLICT(contest_id) DO UPDATE SET block_id=excluded.block_id,lap=excluded.lap',
@@ -753,6 +904,8 @@ export async function createApp(dataDir: string, frontendDir?: string) {
     focus_count: count,
     running: z.boolean(),
     block_id: nullableId,
+    cycle_lap: count.nullable().default(null),
+    cycle_kind: short.nullable().default(null),
     focus_minutes: positive.max(180),
     short_minutes: positive.max(60),
     long_minutes: positive.max(120),
@@ -761,6 +914,16 @@ export async function createApp(dataDir: string, frontendDir?: string) {
     const timer = timerSchema.parse(req.body);
     requireRow(store, 'contests', timer.contest_id);
     validateTopic(store, timer.topic_id, timer.contest_id);
+    if (timer.block_id) {
+      const block = requireRow<Block>(store, 'blocks', timer.block_id);
+      if (block.contest_id !== timer.contest_id) fail('Bloco pertence a outro plano');
+      if (timer.cycle_kind === null) timer.cycle_kind = block.kind;
+      if (timer.cycle_lap === null)
+        timer.cycle_lap =
+          store.one<{ lap: number }>('SELECT lap FROM cycles WHERE contest_id=?', [
+            timer.contest_id,
+          ])?.lap || 0;
+    }
     const old = store.one<{ value: string }>("SELECT value FROM preferences WHERE key='timer'");
     const revision = old ? JSON.parse(old.value).revision || 0 : 0;
     if (timer.revision !== revision)
@@ -805,6 +968,9 @@ export async function createApp(dataDir: string, frontendDir?: string) {
           minutes: elapsed / 60,
           kind: 'pomodoro',
           notes: 'Sessão do cronômetro',
+          block_id: timer.block_id,
+          cycle_lap: timer.cycle_lap,
+          cycle_kind: timer.cycle_kind,
           interrupted: v.interrupted ? 1 : 0,
         });
         store.audit('sessions', key, 'timer_finished', null, {
@@ -882,7 +1048,8 @@ export async function createApp(dataDir: string, frontendDir?: string) {
         fail('Banco de backup inconsistente');
       const version = candidate.exec('SELECT MAX(version) FROM schema_migrations')[0]
         ?.values[0]?.[0];
-      if (version !== 1) fail('Versão de banco incompatível');
+      if (version !== 1 && version !== 2) fail('Versão de banco incompatível');
+      migrateDatabase(candidate);
       const docs = candidate.exec('SELECT filename FROM documents');
       for (const row of docs[0]?.values || [])
         if (!/^[\da-f-]+\.pdf$/.test(String(row[0])) || !files['files/' + row[0]])

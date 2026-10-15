@@ -17,6 +17,7 @@ export type Topic = {
   position: number;
 };
 export type Contest = {
+  kind?: 'plan' | 'contest';
   id: string;
   name: string;
   board: string;
@@ -97,6 +98,9 @@ export type Attempt = {
 };
 export type AttemptLink = { attempt_id: string; contest_id: string; topic_id: string | null };
 export type StudySession = {
+  block_id?: string | null;
+  cycle_lap?: number | null;
+  cycle_kind?: string | null;
   id: string;
   contest_id: string;
   topic_id: string | null;
@@ -147,6 +151,8 @@ export type Event = {
   created_at: string;
 };
 export type Timer = {
+  cycle_kind?: string | null;
+  cycle_lap?: number | null;
   revision: number;
   contest_id: string;
   topic_id: string | null;
@@ -161,7 +167,34 @@ export type Timer = {
   short_minutes: number;
   long_minutes: number;
 };
+export type SyllabusItem = {
+  id: string;
+  contest_id: string;
+  document_id: string;
+  topic_id: string | null;
+  parent_id: string | null;
+  kind: Topic['kind'];
+  title: string;
+  page: number;
+  section: string;
+  excerpt: string;
+  confidence: number;
+  active: number;
+};
+export type CycleCompletion = {
+  id: string;
+  contest_id: string;
+  block_id: string | null;
+  topic_id: string | null;
+  lap: number;
+  kind: string;
+  title: string;
+  topic_path: string[];
+  created_at: string;
+};
 export type State = {
+  syllabus_items?: SyllabusItem[];
+  cycle_completions?: CycleCompletion[];
   contests: Contest[];
   topics: Topic[];
   documents: Document[];

@@ -31,7 +31,7 @@ function makePdf(pages: string[][]) {
     .join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`;
   return Buffer.from(pdf, 'latin1');
 }
-test('fluxo real: concurso, edital, conferência, leitura, questões, ciclo, revisão e backup', async ({
+test('fluxo real: disciplinas sem edital, comparação, leitura, exercícios por volta, revisão e backup', async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -44,17 +44,39 @@ test('fluxo real: concurso, edital, conferência, leitura, questões, ciclo, rev
     fullPage: true,
     animations: 'disabled',
   });
-  await page.getByText('Cadastrar meu primeiro concurso').click();
-  await page.getByLabel('Nome do concurso').fill('Concurso de teste automatizado');
-  await page.getByLabel('Cargo / especialidade').fill('Analista');
-  await page.getByLabel('Banca organizadora').fill('Banca de teste');
+  await page.getByRole('button', { name: 'Cadastrar minhas disciplinas', exact: true }).click();
+  await page.getByLabel('Processo Penal', { exact: true }).check();
+  await page.getByLabel('Direito Civil', { exact: true }).check();
+  await page.getByLabel('Outra disciplina').fill('Disciplina personalizada');
+  await page.getByRole('button', { name: 'Cadastrar disciplinas', exact: true }).click();
+  await expect(page.locator('.topic-row')).toHaveCount(3);
+  await expect(page.getByRole('combobox', { name: 'Concurso selecionado' })).toContainText(
+    'Meus estudos',
+  );
+  await page
+    .locator('.topic-row')
+    .filter({ hasText: 'Direito Civil' })
+    .getByRole('button', { name: 'Adicionar assunto', exact: true })
+    .click();
+  await page.getByLabel('Título original').fill('Pessoas');
+  await page.getByLabel('Cobertura teórica').selectOption('studied');
   await page.getByRole('dialog').getByRole('button', { name: 'Salvar', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analisar Edital', exact: true }).click();
   await page.getByRole('button', { name: 'Importar edital ou retificação' }).click();
   const pdf = makePdf([
     ['EDITAL 01/2026', 'Data da prova: 20/12/2026'],
-    ['CONTEÚDO PROGRAMÁTICO', 'PORTUGUÊS', '1. Crase', '1.1 Emprego do acento grave'],
+    [
+      'CONTEÚDO PROGRAMÁTICO',
+      'DIREITO CIVIL',
+      '1. Pessoas.',
+      '2. Obrigações.',
+      'DIREITO PROCESSUAL PENAL',
+      '1. Inquérito.',
+      'PORTUGUÊS',
+      '1. Crase',
+      '1.1 Emprego do acento grave',
+    ],
   ]);
   await page
     .locator('input[type=file]')
@@ -66,6 +88,15 @@ test('fluxo real: concurso, edital, conferência, leitura, questões, ciclo, rev
   await expect(page.getByText('Crase', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Salvar sugestões para conferência' }).click();
   await expect(page.getByRole('cell', { name: /^20\/12\/2026/ })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Conteúdo programático × meus estudos' }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: /^DIREITO CIVIL › Pessoas\./ }) })
+      .getByRole('cell', { name: 'Estudado', exact: true }),
+  ).toBeVisible();
   await page
     .getByRole('button', { name: 'Confirmar', exact: true })
     .filter({ hasText: 'Confirmar' })
@@ -102,6 +133,22 @@ test('fluxo real: concurso, edital, conferência, leitura, questões, ciclo, rev
   await expect(page.getByText('Você está aqui')).toBeVisible();
   await page.getByRole('button', { name: 'Concluir bloco', exact: true }).click();
   await expect(page.getByText('voltas concluídas')).toContainText('1');
+  await page.getByRole('button', { name: 'Exercícios do Ciclo', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Exercícios do Ciclo — o que estudar nas questões' }),
+  ).toBeVisible();
+  await page.getByLabel('Volta de referência').selectOption('0');
+  await expect(page.locator('.exercise-scope').getByText('Crase', { exact: true })).toBeVisible();
+  await expect(page.locator('.exercise-scope').getByText('Pessoas', { exact: true })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole('button', { name: 'Registrar questões deste conteúdo', exact: true })
+    .click();
+  await expect(page.getByLabel('Classificação principal').locator('option:checked')).toHaveText(
+    'PORTUGUÊS › Crase',
+  );
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancelar', exact: true }).click();
   await page.getByRole('button', { name: 'Revisões', exact: true }).click();
   await page.getByRole('button', { name: 'Programar revisões', exact: true }).click();
   await page.getByLabel('Assunto', { exact: true }).selectOption({ label: 'PORTUGUÊS › Crase' });

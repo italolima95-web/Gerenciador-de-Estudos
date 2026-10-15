@@ -39,10 +39,12 @@ import {
   type Field,
 } from './UI';
 export function AttemptEditor({
+  initialTopicId = '',
   attempt,
   mock,
   onClose,
 }: {
+  initialTopicId?: string;
   attempt?: Attempt;
   mock?: Mock;
   onClose: () => void;
@@ -129,7 +131,7 @@ export function AttemptEditor({
               penalty: 0,
               question_type: 'multiple',
               board: mock?.board || contest.board,
-              topic_id: '',
+              topic_id: initialTopicId,
             }
       }
       onClose={onClose}
@@ -161,9 +163,25 @@ export function AttemptEditor({
     />
   );
 }
-function MixedSession({ mock, onClose }: { mock?: Mock; onClose: () => void }) {
+export function MixedSession({
+  mock,
+  onClose,
+  initialTopicIds = [],
+}: {
+  mock?: Mock;
+  onClose: () => void;
+  initialTopicIds?: string[];
+}) {
   const { state, contest, refresh, notify } = useApp();
-  const [rows, setRows] = useState([{ topic_id: '', correct: 0, wrong: 0, blank: 0, minutes: 0 }]),
+  const [rows, setRows] = useState(
+      (initialTopicIds.length ? initialTopicIds : ['']).map((topic_id) => ({
+        topic_id,
+        correct: 0,
+        wrong: 0,
+        blank: 0,
+        minutes: 0,
+      })),
+    ),
     [date, setDate] = useState(dayKey()),
     [origin, setOrigin] = useState(''),
     [board, setBoard] = useState(mock?.board || contest?.board || ''),

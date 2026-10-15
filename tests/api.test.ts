@@ -1,10 +1,11 @@
+import { zipSync, strToU8 } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/app.js';
-import { Store } from '../server/db.js';
+import { Store, migration } from '../server/db.js';
 import type { State } from '../shared/types.js';
 let ctx: Awaited<ReturnType<typeof createApp>>, dir: string;
 const client = () => request(ctx.app);
@@ -478,4 +479,160 @@ it('importa texto extenso de um PDF sem o limite padrão de campo de 1 MB', asyn
   const saved = await get(`/documents/${d}`);
   expect(saved.status).toBe(200);
   expect(saved.body.text_pages).toEqual(pages);
+});
+
+describe('Disciplinas primeiro, edital opcional e exercícios por volta', () => {
+  it('cria um plano sem concurso e cadastra catálogo/customizadas sem duplicatas por alias', async () => {
+    const first = await post('/study-plan', {}),
+      second = await post('/study-plan', {});
+    expect(first.status).toBe(201);
+    expect(second.body.id).toBe(first.body.id);
+    expect(
+      (
+        await post('/disciplines', {
+          contest_id: first.body.id,
+          titles: ['Processo Penal', 'Direito Processual Penal', 'Disciplina personalizada'],
+        })
+      ).status,
+    ).toBe(201);
+    const s = await state();
+    expect(s.contests[0]).toMatchObject({ name: 'Meus estudos', kind: 'plan', exam_date: '' });
+    expect(s.topics.map((t) => t.title)).toEqual(['Processo Penal', 'Disciplina personalizada']);
+    expect(s.syllabus_items).toEqual([]);
+  });
+  it('reutiliza disciplinas/tópicos manuais e seus estudos, mantém fonte independente e reanálise idempotente', async () => {
+    const c = (await post('/study-plan', {})).body.id;
+    const d = await topic(c, 'Processo Penal'),
+      t = await topic(c, 'Inquérito policial', d, 'subject');
+    const before = (await state()).topics.find((x) => x.id === t)!;
+    await put(`/topics/${t}`, { ...before, coverage: 'studied' });
+    const doc = await document(c, [
+      'CONTEÚDO PROGRAMÁTICO\nDIREITO PROCESSUAL PENAL\n1. Inquérito policial.\n2. Provas.',
+    ]);
+    const a = (await post(`/documents/${doc}/analyze`, {})).body;
+    const apply = () =>
+      post(`/documents/${doc}/apply-analysis`, {
+        fields: [],
+        topicKeys: a.topics.map((x: { key: string }) => x.key),
+      });
+    expect((await apply()).status).toBe(200);
+    expect((await apply()).status).toBe(200);
+    const s = await state();
+    expect(s.topics).toHaveLength(3);
+    expect(s.topics.find((x) => x.id === t)?.coverage).toBe('studied');
+    expect(s.topics.find((x) => x.id === t)?.source_document_id).toBeNull();
+    const requirements = s.syllabus_items!.filter((x) => x.active);
+    expect(requirements).toHaveLength(3);
+    expect(requirements.find((x) => x.topic_id === t)).toMatchObject({
+      document_id: doc,
+      page: 1,
+      title: 'Inquérito policial.',
+    });
+  });
+  it('registra sessão e conclusão com volta e preserva histórico sem duplicar minutos', async () => {
+    const c = (await post('/study-plan', {})).body.id,
+      d = await topic(c, 'Direito Civil'),
+      t = await topic(c, 'Pessoas', d, 'subject');
+    const block = (
+      await post('/blocks', {
+        contest_id: c,
+        topic_id: t,
+        title: 'Pessoas',
+        kind: 'theory',
+        minutes: 25,
+      })
+    ).body.id;
+    await post('/blocks', {
+      contest_id: c,
+      title: 'Exercícios do Ciclo',
+      kind: 'cycle_questions',
+      minutes: 30,
+      position: 1,
+    });
+    expect(
+      (
+        await post('/sessions', {
+          contest_id: c,
+          topic_id: t,
+          block_id: block,
+          cycle_lap: 0,
+          date: '2026-10-15',
+          minutes: 25,
+          kind: 'theory',
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await post(`/cycles/${c}/advance`, {
+          completed: true,
+          expected_block_id: block,
+          expected_lap: 0,
+        })
+      ).status,
+    ).toBe(200);
+    const s = await state();
+    expect(s.sessions).toHaveLength(1);
+    expect(s.sessions[0]).toMatchObject({
+      block_id: block,
+      cycle_lap: 0,
+      cycle_kind: 'theory',
+      minutes: 25,
+    });
+    expect(s.cycle_completions).toHaveLength(1);
+    expect(s.cycle_completions![0]).toMatchObject({
+      lap: 0,
+      topic_path: ['Direito Civil', 'Pessoas'],
+    });
+    expect(s.cycles[0].lap).toBe(0);
+  });
+  it('adiamento não vira estudo e não aceita associação de outro plano', async () => {
+    const c = await contest(),
+      other = await contest('Outro'),
+      t = await topic(c),
+      foreign = await topic(other);
+    const b = (
+      await post('/blocks', {
+        contest_id: c,
+        topic_id: t,
+        title: 'Teoria',
+        kind: 'theory',
+        minutes: 20,
+      })
+    ).body.id;
+    await post(`/cycles/${c}/advance`, { completed: false, expected_block_id: b });
+    expect((await state()).cycle_completions).toEqual([]);
+    const doc = await document(c),
+      a = (await post(`/documents/${doc}/analyze`, {})).body;
+    await post(`/documents/${doc}/apply-analysis`, {
+      topicKeys: a.topics.map((x: { key: string }) => x.key),
+    });
+    const item = (await state()).syllabus_items!.find((i) => i.kind === 'subject')!;
+    expect((await put(`/syllabus/${item.id}`, { topic_id: foreign })).status).toBe(400);
+    expect((await put(`/syllabus/${item.id}`, { topic_id: t })).status).toBe(400);
+  });
+});
+
+it('restaura um backup da versão 1.0 e migra preservando dados', async () => {
+  const legacy = new ctx.store.SQL.Database();
+  legacy.run(migration);
+  legacy.run(
+    "INSERT INTO contests(id,name,created_at) VALUES('legacy','Concurso da versão 1.0','2026-10-15')",
+  );
+  const bytes = zipSync({
+    'manifest.json': strToU8(JSON.stringify({ app: 'cronograma-de-estudos', version: 1 })),
+    'studies.sqlite': legacy.export(),
+  });
+  legacy.close();
+  const res = await client()
+    .post('/api/restore')
+    .set('X-Study-Client', 'cronograma')
+    .field('confirm', 'true')
+    .attach('file', Buffer.from(bytes), 'backup-v1.zip');
+  expect(res.status).toBe(200);
+  expect((await state()).contests[0].name).toBe('Concurso da versão 1.0');
+  expect(ctx.store.one('SELECT MAX(version) as version FROM schema_migrations')).toEqual({
+    version: 2,
+  });
+  expect(ctx.store.one('PRAGMA foreign_keys')).toEqual({ foreign_keys: 1 });
 });

@@ -1,3 +1,4 @@
+import { syllabusCoverage } from '../../shared/comparison';
 import { useRef, useState } from 'react';
 import {
   ShieldCheck,
@@ -69,7 +70,7 @@ export function Readiness() {
     );
   const topics = state.topics.filter((t) => t.contest_id === contest.id),
     ids = topicId ? descendants(topics, topicId) : new Set(topics.map((t) => t.id)),
-    cov = coverage(topics, state.mappings, state.readings, topicId || undefined),
+    cov = syllabusCoverage(state, contest.id, topicId || undefined),
     stats = statistics(state.attempts, state.attempt_links, topics, {
       contestId: contest.id,
       topicId: topicId || undefined,

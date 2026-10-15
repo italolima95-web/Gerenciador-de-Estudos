@@ -3195,3 +3195,16 @@ tr:last-child td {
     scroll-behavior: auto !important;
   }
 }
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 18px;
+  margin: 20px 0;
+}
+.exercise-scope {
+  margin: 18px 0;
+}
+.exercise-scope li {
+  margin: 12px 0;
+}

@@ -1,3 +1,5 @@
+import { cycleExerciseScope } from '../../shared/comparison';
+import { AttemptEditor, MixedSession } from './Practice';
 import { useEffect, useState } from 'react';
 import {
   Plus,
@@ -29,7 +31,8 @@ export const kindLabels: Record<string, string> = {
   theory: 'Teoria',
   review: 'Revisão',
   questions: 'Questões',
-  mock: 'Simulado',
+  cycle_questions: 'Exercícios do Ciclo',
+  mock: 'SIMULADO',
   pomodoro: 'Pomodoro',
 };
 export function StudyEntry({
@@ -94,6 +97,11 @@ export function StudyEntry({
           {
             ...v,
             contest_id: contest.id,
+            block_id: session?.block_id || block?.id || null,
+            cycle_lap:
+              session?.cycle_lap ??
+              (block ? state.cycles.find((c) => c.contest_id === contest.id)?.lap || 0 : null),
+            cycle_kind: session?.cycle_kind || block?.kind || null,
             topic_id: v.topic_id || null,
             interrupted: v.interrupted ? 1 : 0,
           },
@@ -113,9 +121,9 @@ export function Cycle() {
   if (!contest)
     return (
       <Empty
-        title="Cadastre seu concurso"
+        title="Comece pelas suas disciplinas"
         description="O ciclo continua de onde você parou, independentemente dos dias da semana."
-        action={<Button onClick={() => navigate('Meus Concursos')}>Meus concursos</Button>}
+        action={<Button onClick={() => navigate('Disciplinas')}>Cadastrar disciplinas</Button>}
       />
     );
   const blocks = state.blocks
@@ -138,10 +146,50 @@ export function Cycle() {
         title="Meu ciclo de estudos"
         description="Uma sequência contínua que se adapta à sua rotina. Termine um bloco e siga em frente."
         action={
-          <Button onClick={() => setEditing('new')}>
-            <Plus size={17} />
-            Adicionar bloco
-          </Button>
+          <div className="row-actions">
+            <Button
+              variant="secondary"
+              onClick={() =>
+                mutate(
+                  () =>
+                    send('/blocks', {
+                      contest_id: contest.id,
+                      topic_id: null,
+                      title: 'Exercícios do Ciclo',
+                      minutes: 30,
+                      kind: 'cycle_questions',
+                      position: blocks.length,
+                    }),
+                  'Exercícios do Ciclo adicionados',
+                )
+              }
+            >
+              Exercícios do Ciclo
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                mutate(
+                  () =>
+                    send('/blocks', {
+                      contest_id: contest.id,
+                      topic_id: null,
+                      title: 'SIMULADO',
+                      minutes: 120,
+                      kind: 'mock',
+                      position: blocks.length,
+                    }),
+                  'Simulado adicionado',
+                )
+              }
+            >
+              SIMULADO
+            </Button>
+            <Button onClick={() => setEditing('new')}>
+              <Plus size={17} />
+              Adicionar bloco
+            </Button>
+          </div>
         }
       />
       <div className="cycle-summary">
@@ -167,6 +215,7 @@ export function Cycle() {
           Ver histórico
         </Button>
       </div>
+      {blocks.some((b) => b.kind === 'cycle_questions') && <CycleExercises lap={cycle?.lap || 0} />}
       {blocks.length ? (
         <div className="cycle-list">
           {blocks.map((b, i) => (
@@ -182,7 +231,9 @@ export function Cycle() {
                     ? ancestry(state.topics, b.topic_id)
                         .map((t) => t.title)
                         .join(' › ')
-                    : 'Sem tópico associado'}
+                    : b.kind === 'cycle_questions'
+                      ? 'Disciplinas e tópicos estudados na volta selecionada, listados acima'
+                      : 'Sem tópico associado'}
                 </p>
                 <span>
                   {kindLabels[b.kind]} · {duration(b.minutes)}
@@ -218,6 +269,7 @@ export function Cycle() {
                           focus_count: old?.focus_count || 0,
                           running: true,
                           block_id: b.id,
+                          cycle_lap: cycle?.lap || 0,
                           focus_minutes: b.minutes,
                           short_minutes: settings.short,
                           long_minutes: settings.long,
@@ -241,6 +293,7 @@ export function Cycle() {
                             send(`/cycles/${contest.id}/advance`, {
                               completed: true,
                               expected_block_id: cycle?.block_id || null,
+                              expected_lap: cycle?.lap || 0,
                             }),
                           'Bloco concluído. Próximo bloco selecionado.',
                         )
@@ -258,6 +311,7 @@ export function Cycle() {
                             send(`/cycles/${contest.id}/advance`, {
                               completed: false,
                               expected_block_id: cycle?.block_id || null,
+                              expected_lap: cycle?.lap || 0,
                             }),
                           'Bloco adiado',
                         )
@@ -373,8 +427,14 @@ export function Cycle() {
               editing === 'new' ? '/blocks' : `/blocks/${editing.id}`,
               {
                 ...v,
+                title:
+                  v.kind === 'cycle_questions'
+                    ? 'Exercícios do Ciclo'
+                    : v.kind === 'mock'
+                      ? 'SIMULADO'
+                      : v.title,
                 contest_id: contest.id,
-                topic_id: v.topic_id || null,
+                topic_id: v.kind === 'cycle_questions' ? null : v.topic_id || null,
                 position: editing === 'new' ? blocks.length : editing.position,
               },
               editing === 'new' ? 'POST' : 'PUT',
@@ -386,6 +446,96 @@ export function Cycle() {
       )}
       {logging && <StudyEntry block={logging} onClose={() => setLogging(undefined)} />}
     </>
+  );
+}
+export function CycleExercises({ lap }: { lap: number }) {
+  const { state, contest } = useApp();
+  const [selectedLap, setSelectedLap] = useState<number | null>(null),
+    [recording, setRecording] = useState<string>(),
+    [mixed, setMixed] = useState(false);
+  if (!contest) return null;
+  const currentLap = selectedLap ?? lap;
+  const scope = cycleExerciseScope(state, contest.id, currentLap);
+  const laps = [
+    ...new Set([
+      lap,
+      ...(state.cycle_completions || [])
+        .filter((c) => c.contest_id === contest.id)
+        .map((c) => c.lap),
+      ...state.sessions
+        .filter((s) => s.contest_id === contest.id && s.cycle_lap != null)
+        .map((s) => s.cycle_lap!),
+    ]),
+  ].sort((a, b) => b - a);
+  const groups = [...new Set(scope.map((r) => r.path[0]))];
+  return (
+    <Card title="Exercícios do Ciclo — o que estudar nas questões" className="exercise-scope">
+      <label className="field">
+        Volta de referência
+        <select value={currentLap} onChange={(e) => setSelectedLap(Number(e.target.value))}>
+          {laps.map((n) => (
+            <option key={n} value={n}>
+              Volta {n + 1}
+              {n === lap ? ' · atual' : ' · anterior'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p>
+        Resolva questões sobre os conteúdos abaixo, registrados em sessões de teoria/revisão ou
+        blocos concluídos nesta volta. Blocos apenas planejados ou adiados não entram na lista.
+      </p>
+      {scope.length ? (
+        <>
+          {groups.map((discipline) => (
+            <div key={discipline}>
+              <h3>{discipline}</h3>
+              <ul>
+                {scope
+                  .filter((r) => r.path[0] === discipline)
+                  .map((r, i) => (
+                    <li key={r.topicId || i}>
+                      <strong>
+                        {r.path.slice(1).join(' › ') ||
+                          'Disciplina geral · tópico específico não informado'}
+                      </strong>
+                      <small>
+                        {' '}
+                        · {r.minutes > 0 ? duration(r.minutes) + ' registrados' : 'bloco concluído'}
+                        {r.completed && r.minutes > 0 ? ' · concluído' : ''}
+                      </small>
+                      {r.topicId && (
+                        <Button variant="ghost" onClick={() => setRecording(r.topicId!)}>
+                          Registrar questões deste conteúdo
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ))}
+          <Button onClick={() => setMixed(true)}>Registrar questões de vários conteúdos</Button>
+        </>
+      ) : (
+        <p className="muted">
+          Ainda não há conteúdos estudados registrados nesta volta. Registre uma sessão no bloco ou
+          conclua um bloco de teoria/revisão. Você também pode consultar uma volta anterior.
+        </p>
+      )}
+      <p className="footnote">
+        O conteúdo estudado em versões anteriores à 1.1 não tinha identificação da volta e permanece
+        no histórico geral.
+      </p>
+      {recording && (
+        <AttemptEditor initialTopicId={recording} onClose={() => setRecording(undefined)} />
+      )}
+      {mixed && (
+        <MixedSession
+          initialTopicIds={scope.flatMap((r) => (r.topicId ? [r.topicId] : []))}
+          onClose={() => setMixed(false)}
+        />
+      )}
+    </Card>
   );
 }
 export function Pomodoro() {
