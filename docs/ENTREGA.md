@@ -66,6 +66,6 @@ O instalador NSIS Windows foi tentado em Linux e encontrou um toolset Wine sem D
 - `release/Cronograma de Estudos 1.0.0.exe`: versão portátil Windows x64; build concluído, execução nativa Windows não testada.
 - `release/linux-unpacked/`: aplicação Linux empacotada; inicialização, cadastro e persistência após reinício verificados.
 - `release/cronograma-de-estudos-fonte.zip`: código-fonte, lockfile, documentação e testes; não inclui dependências, dados locais ou binários gerados.
-- `.github/workflows/windows.yml`: procedimento automatizado para o instalador NSIS em Windows.
+- `.github/workflows/windows.yml`: publicação automatizada da versão portátil Windows. O instalador NSIS permanece separado.
 
 O install_script e as instruções start_skill do ambiente foram salvos como rascunho para reutilização. Eles não publicam o código nem o ambiente automaticamente.

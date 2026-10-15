@@ -6,7 +6,7 @@ Aplicativo local de preparação para concursos: edital → conteúdos → mater
 
 ## Download para Windows
 
-As versões publicadas ficam em [GitHub Releases](https://github.com/italolima95-web/Gerenciador-de-Estudos/releases). Abra a versão e, em **Assets**, escolha `Cronograma-de-Estudos-Windows-x64.exe` (portátil), `Cronograma-de-Estudos-Instalador-x64.exe` (instalador) ou `cronograma-windows.zip`. Os downloads aparecem após o workflow de Windows concluir com sucesso.
+As versões publicadas ficam em [GitHub Releases](https://github.com/italolima95-web/Gerenciador-de-Estudos/releases). Abra a versão e, em **Assets**, escolha `Cronograma-de-Estudos-Windows-x64.exe` (portátil) ou `cronograma-windows.zip`. Os downloads aparecem após o workflow de Windows concluir com sucesso.
 
 ## Iniciar
 
@@ -111,7 +111,7 @@ npm test
 npm run dist:win
 ```
 
-A saída esperada do build nativo bem-sucedido é `release/Cronograma de Estudos Setup 1.0.0.exe`, instalador NSIS para Windows x64, com escolha de diretório. A configuração está em `package.json`. O workflow `.github/workflows/windows.yml` também pode gerar o artefato em um runner Windows, por acionamento manual ou uma tag `v*`. Uma tag `v*` dispara o build, os testes e a publicação dos arquivos no GitHub Releases. O acionamento manual disponibiliza os arquivos como artefatos do workflow.
+A saída esperada do build nativo bem-sucedido é `release/Cronograma de Estudos Setup 1.0.0.exe`, instalador NSIS para Windows x64, com escolha de diretório. A configuração está em `package.json`. O workflow `.github/workflows/windows.yml` gera a versão portátil Windows usando um runner Linux, por acionamento manual, uma tag `v*` ou um ramo `release/windows-*`. Tags e ramos de release publicam o executável e o ZIP em GitHub Releases; o acionamento manual disponibiliza os arquivos como artefatos do workflow. O instalador NSIS deve ser gerado separadamente no Windows.
 
 Para uma versão Windows portátil, sem instalação, use `npm run dist:win:portable`. A saída é `release/Cronograma de Estudos 1.0.0.exe`.
 

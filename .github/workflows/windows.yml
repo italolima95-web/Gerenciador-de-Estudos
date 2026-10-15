@@ -1,4 +1,4 @@
-name: Aplicativo Windows e release
+name: Windows portatil e release
 on:
   workflow_dispatch:
   push:
@@ -7,8 +7,8 @@ on:
 permissions:
   contents: read
 jobs:
-  windows:
-    runs-on: windows-latest
+  portable:
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -24,36 +24,39 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - name: Gerar instalador e aplicativo portatil
-        run: npx electron-builder --win nsis portable --x64
+      - name: Gerar aplicativo Windows portatil
+        run: npx electron-builder --win portable --x64 --publish never
       - name: Preparar arquivos para download
-        shell: pwsh
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force release/downloads | Out-Null
-          Copy-Item 'release/Cronograma de Estudos 1.0.0.exe' 'release/downloads/Cronograma-de-Estudos-Windows-x64.exe'
-          Copy-Item 'release/Cronograma de Estudos Setup 1.0.0.exe' 'release/downloads/Cronograma-de-Estudos-Instalador-x64.exe'
-          Compress-Archive -Path 'release/downloads/Cronograma-de-Estudos-Windows-x64.exe' -DestinationPath 'release/downloads/cronograma-windows.zip'
-          Get-ChildItem release/downloads -File | Sort-Object Name | ForEach-Object {
-            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)"
-          } | Set-Content -Encoding ascii release/downloads/SHA256SUMS.txt
+          set -euo pipefail
+          mkdir -p release/downloads
+          cp 'release/Cronograma de Estudos 1.0.0.exe' release/downloads/Cronograma-de-Estudos-Windows-x64.exe
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('release/downloads/cronograma-windows.zip', 'w', compression=zipfile.ZIP_STORED) as archive:
+              archive.write('release/downloads/Cronograma-de-Estudos-Windows-x64.exe', 'Cronograma-de-Estudos-Windows-x64.exe')
+          PY
+          cd release/downloads
+          sha256sum Cronograma-de-Estudos-Windows-x64.exe cronograma-windows.zip > SHA256SUMS.txt
       - name: Publicar versao no GitHub Releases
         if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/release/windows-')
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'v' + (node -p "require('./package.json').version") }
-          gh release create $tag --verify-tag --title "Cronograma de Estudos $tag" --notes-file docs/RELEASE.md 'release/downloads/Cronograma-de-Estudos-Windows-x64.exe' 'release/downloads/Cronograma-de-Estudos-Instalador-x64.exe' 'release/downloads/cronograma-windows.zip' 'release/downloads/SHA256SUMS.txt'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="v$(node -p "require('./package.json').version")"
+          fi
+          gh release create "$release_tag" --verify-tag --title "Cronograma de Estudos $release_tag" --notes-file docs/RELEASE.md release/downloads/Cronograma-de-Estudos-Windows-x64.exe release/downloads/cronograma-windows.zip release/downloads/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch'
         with:
           name: cronograma-de-estudos-windows-x64
           compression-level: 0
           retention-days: 7
-          path: |
-            release/downloads/cronograma-windows.zip
-            release/downloads/Cronograma-de-Estudos-Instalador-x64.exe
-            release/downloads/SHA256SUMS.txt
+          path: release/downloads/*
