@@ -1,3 +1,5 @@
+import { NoticeSummary, type SummaryFact } from './NoticeSummary';
+import { disciplineKey } from '../../shared/catalog';
 import { syllabusComparison } from '../../shared/comparison';
 import { coverageLabels } from './Curriculum';
 import { useEffect, useRef, useState } from 'react';
@@ -307,6 +309,7 @@ export function NoticeAnalysis() {
   const [importing, setImporting] = useState(false),
     [selected, setSelected] = useState(''),
     [role, setRole] = useState(''),
+    [tab, setTab] = useState<'summary' | 'subjects'>('summary'),
     [analysis, setAnalysis] = useState<{
       facts: ExtractedFact[];
       topics: ExtractedTopic[];
@@ -320,34 +323,101 @@ export function NoticeAnalysis() {
     return (
       <Empty
         title="Comece pelas suas disciplinas"
-        description="O edital é opcional. Cadastre primeiro suas disciplinas; depois, compare o conteúdo do documento com seus estudos."
+        description="Cadastre suas disciplinas. O edital pode ser adicionado depois."
         action={<Button onClick={() => navigate('Disciplinas')}>Cadastrar disciplinas</Button>}
       />
     );
-  const docs = state.documents.filter((d) => d.contest_id === contest.id && d.kind !== 'material'),
-    document = docs.find((d) => d.id === selected),
-    facts = state.facts.filter((f) => f.contest_id === contest.id);
-  const analyze = async (selectedRole = role) => {
-    if (!selected) return;
+  const docs = state.documents
+    .filter((d) => d.contest_id === contest.id && d.kind !== 'material')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const currentId = selected || docs[0]?.id || '',
+    document = docs.find((d) => d.id === currentId);
+  const saved = state.facts
+    .filter((f) => f.contest_id === contest.id)
+    .sort(
+      (a, b) =>
+        Number(b.document_id === currentId) - Number(a.document_id === currentId) ||
+        (state.documents.find((d) => d.id === b.document_id)?.created_at || '').localeCompare(
+          state.documents.find((d) => d.id === a.document_id)?.created_at || '',
+        ),
+    );
+  const facts: SummaryFact[] = analysis ? analysis.facts : saved;
+  const requirements = (state.syllabus_items || []).filter(
+    (i) => i.contest_id === contest.id && i.active,
+  );
+  const roots = analysis ? analysis.topics.filter((t) => t.kind === 'discipline') : [];
+  const grouped = new Map<string, ExtractedTopic[]>(),
+    rootFor = new Map<string, string>();
+  for (const t of analysis?.topics || []) {
+    const root = t.kind === 'discipline' ? t.key : rootFor.get(t.parentKey || '');
+    if (root) {
+      rootFor.set(t.key, root);
+      if (t.kind !== 'discipline') {
+        const list = grouped.get(root) || [];
+        list.push(t);
+        grouped.set(root, list);
+      }
+    }
+  }
+  const savedRoots = [
+    ...new Map(
+      requirements.filter((i) => i.kind === 'discipline').map((i) => [disciplineKey(i.title), i]),
+    ).values(),
+  ];
+  const comparison = syllabusComparison(state, contest.id);
+  const analyze = async () => {
+    if (!currentId) return;
     setBusy(true);
     try {
-      const a = await send<typeof analysis>(`/documents/${selected}/analyze`, {
-        role: selectedRole,
+      const a = await send<NonNullable<typeof analysis>>(`/documents/${currentId}/analyze`, {
+        role,
       });
       setAnalysis(a);
-      setSelectedKeys(new Set(a?.topics.map((t) => t.key)));
+      setSelectedKeys(new Set(a.topics.map((t) => t.key)));
+      setTab('summary');
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
       setBusy(false);
     }
   };
+  const toggle = (t: ExtractedTopic, checked: boolean) =>
+    setSelectedKeys((old) => {
+      const n = new Set(old);
+      const visit = (key: string) => {
+        checked ? n.add(key) : n.delete(key);
+        for (const child of analysis?.topics.filter((x) => x.parentKey === key) || [])
+          visit(child.key);
+      };
+      visit(t.key);
+      if (checked) {
+        let p = analysis?.topics.find((x) => x.key === t.parentKey);
+        while (p) {
+          n.add(p.key);
+          p = analysis?.topics.find((x) => x.key === p?.parentKey);
+        }
+      }
+      return n;
+    });
+  const save = async () => {
+    if (!analysis) return;
+    const result = await mutate(
+      () =>
+        send(`/documents/${currentId}/apply-analysis`, {
+          role,
+          fields: analysis.facts.map((f) => f.field),
+          topicKeys: [...selectedKeys],
+        }),
+      'Análise salva. Confira os dados e escolha suas disciplinas no ciclo.',
+    );
+    if (result) setAnalysis(undefined);
+  };
   return (
     <>
       <PageTitle
-        eyebrow="DO DOCUMENTO AO PLANO"
+        eyebrow="EDITAL EM RESUMO"
         title="Analisar edital"
-        description="Extraia o conteúdo, confira a origem e construa seu plano com segurança."
+        description="Veja os dados essenciais do concurso e consulte o conteúdo por disciplina."
         action={
           <Button onClick={() => setImporting(true)}>
             <Upload size={17} />
@@ -355,323 +425,227 @@ export function NoticeAnalysis() {
           </Button>
         }
       />
-      <div className="notice-callout">
-        <FileText size={23} />
-        <div>
-          <strong>Você tem a palavra final.</strong>
-          <p>
-            A análise é local e baseada em regras. Toda informação extraída precisa de conferência;
-            nenhum documento é declarado como a versão mais recente.
-          </p>
-        </div>
-      </div>
-      <Card title="1. Selecione o documento">
+      <Card>
         <div className="toolbar no-margin">
           <select
             aria-label="Documento para análise"
-            value={selected}
+            value={currentId}
             onChange={(e) => {
               setSelected(e.target.value);
               setAnalysis(undefined);
               setRole('');
             }}
           >
-            <option value="">Selecione um edital, anexo ou retificação</option>
+            <option value="">Selecione um documento</option>
             {docs.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.name} · {d.kind}
+                {d.name}
               </option>
             ))}
           </select>
-          <Button disabled={!selected || busy} onClick={() => analyze()}>
+          <Button disabled={!currentId || busy} onClick={analyze}>
             <ScanText size={17} />
             {busy ? 'Analisando…' : 'Analisar documento'}
           </Button>
           {document && (
             <Button variant="secondary" onClick={() => openDocument(document.id)}>
-              Conferir com o Edital Original
-              <ExternalLink size={15} />
+              Abrir edital original
             </Button>
           )}
         </div>
+        {analysis && analysis.roles.length > 1 && (
+          <div className="toolbar">
+            <label className="field">
+              Cargo de interesse
+              <select value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="">Todos os cargos</option>
+                {analysis.roles.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </label>
+            <Button variant="secondary" onClick={analyze}>
+              Filtrar por cargo
+            </Button>
+          </div>
+        )}
+        {analysis && (
+          <div className="notice-save-bar">
+            <p>
+              {roots.length} disciplinas identificadas · os tópicos ficam organizados dentro de cada
+              matéria.
+            </p>
+            <Button onClick={save}>Salvar análise</Button>
+          </div>
+        )}
       </Card>
-      {!docs.length && (
+      {!docs.length ? (
         <Empty
-          title="Importe o edital original"
-          description="A extração usa apenas o conteúdo dos seus documentos. PDFs digitalizados podem ser importados com OCR local."
+          title="Importe seu edital"
+          description="O resumo aparecerá aqui. Seus estudos manuais continuam disponíveis sem edital."
           action={<Button onClick={() => setImporting(true)}>Importar documento</Button>}
         />
-      )}{' '}
-      {analysis && (
-        <Card title="2. Revise a estrutura sugerida" className="section-gap">
-          <p className="warning-text">
-            <AlertTriangle size={17} />
-            {analysis.warning}
-          </p>
-          {analysis.roles.length > 0 && (
-            <div className="toolbar">
-              <label className="field">
-                Cargo de interesse
-                <select
-                  value={role}
-                  onChange={(e) => {
-                    setRole(e.target.value);
-                  }}
-                >
-                  <option value="">Conteúdo de todos os cargos — escolha para filtrar</option>
-                  {analysis.roles.map((r) => (
-                    <option key={r}>{r}</option>
-                  ))}
-                </select>
-              </label>
-              <Button variant="secondary" onClick={() => analyze(role)}>
-                Reanalisar para o cargo
-              </Button>
+      ) : (
+        <>
+          <div role="tablist" aria-label="Resultado da análise" className="notice-tabs">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'summary'}
+              aria-controls="notice-summary"
+              id="notice-summary-tab"
+              onClick={() => setTab('summary')}
+            >
+              Resumo do concurso
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'subjects'}
+              aria-controls="notice-subjects"
+              id="notice-subjects-tab"
+              onClick={() => setTab('subjects')}
+            >
+              Matérias do edital <span>{analysis ? roots.length : savedRoots.length}</span>
+            </button>
+          </div>
+          {tab === 'summary' ? (
+            <div role="tabpanel" aria-labelledby="notice-summary-tab" id="notice-summary">
+              <NoticeSummary
+                facts={facts}
+                documentId={currentId}
+                disciplines={analysis ? roots.map((r) => r.title) : savedRoots.map((r) => r.title)}
+                onCorrect={setEditFact}
+              />
+            </div>
+          ) : (
+            <div role="tabpanel" aria-labelledby="notice-subjects-tab" id="notice-subjects">
+              <Card title="Matérias do edital">
+                <p className="muted">
+                  Abra apenas a disciplina que deseja conferir. Estes conteúdos não entram
+                  automaticamente no ciclo; você escolhe as disciplinas depois.
+                </p>
+                {analysis ? (
+                  roots.length ? (
+                    roots.map((root) => {
+                      const children = grouped.get(root.key) || [];
+                      return (
+                        <NoticeFold key={root.key}>
+                          <summary>
+                            <span>{root.title}</span>
+                            <small>{children.length} tópicos</small>
+                          </summary>
+                          <div className="notice-discipline-tools">
+                            <label className="check-row">
+                              <input
+                                type="checkbox"
+                                checked={selectedKeys.has(root.key)}
+                                onChange={(e) => toggle(root, e.target.checked)}
+                              />
+                              Incluir esta disciplina na minha lista de estudos
+                            </label>
+                            <Button
+                              variant="ghost"
+                              onClick={() => openDocument(currentId, root.page, root.excerpt)}
+                            >
+                              Ver disciplina no edital
+                            </Button>
+                          </div>
+                          <div className="notice-scroll extraction-list">
+                            {children.map((t) => (
+                              <label
+                                key={t.key}
+                                style={{ paddingLeft: t.kind === 'subtopic' ? 32 : 12 }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedKeys.has(t.key)}
+                                  onChange={(e) => toggle(t, e.target.checked)}
+                                />
+                                <span>{t.title}</span>
+                                <button
+                                  type="button"
+                                  className="text-link"
+                                  onClick={() => openDocument(currentId, t.page, t.excerpt)}
+                                >
+                                  p. {t.page}
+                                </button>
+                              </label>
+                            ))}
+                          </div>
+                        </NoticeFold>
+                      );
+                    })
+                  ) : (
+                    <p className="muted">
+                      Nenhuma disciplina reconhecida no conteúdo programático. Confira o original.
+                    </p>
+                  )
+                ) : savedRoots.length ? (
+                  savedRoots.map((root) => {
+                    const rows = comparison.filter(
+                      (r) => disciplineKey(r.path[0]) === disciplineKey(root.title),
+                    );
+                    const studied = rows.filter((r) => r.status === 'studied').length;
+                    return (
+                      <NoticeFold key={root.id}>
+                        <summary>
+                          <span>{root.title}</span>
+                          <small>
+                            {studied}/{rows.length} tópicos estudados
+                          </small>
+                        </summary>
+                        <div className="notice-scroll">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Conteúdo programático</th>
+                                <th>Meus estudos</th>
+                                <th>Origem</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((row) => (
+                                <tr key={row.item.id}>
+                                  <td>
+                                    {row.path.slice(1).join(' › ') || row.item.title}
+                                    <SyllabusMatch item={row.item} />
+                                  </td>
+                                  <td>
+                                    {coverageLabels[row.status as keyof typeof coverageLabels]}
+                                  </td>
+                                  <td>
+                                    <button
+                                      className="text-link"
+                                      onClick={() =>
+                                        openDocument(
+                                          row.item.document_id,
+                                          row.item.page,
+                                          row.item.excerpt,
+                                        )
+                                      }
+                                    >
+                                      p. {row.item.page}
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </NoticeFold>
+                    );
+                  })
+                ) : (
+                  <p className="muted">
+                    Analise o documento para identificar as disciplinas do conteúdo programático.
+                  </p>
+                )}
+              </Card>
             </div>
           )}
-          <div className="extraction-list">
-            {analysis.topics.length ? (
-              analysis.topics.map((t) => (
-                <label
-                  key={t.key}
-                  style={{
-                    paddingLeft: t.kind === 'discipline' ? 12 : t.kind === 'subject' ? 32 : 52,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedKeys.has(t.key)}
-                    onChange={(e) =>
-                      setSelectedKeys((v) => {
-                        const n = new Set(v);
-                        if (e.target.checked) {
-                          let current: ExtractedTopic | undefined = t;
-                          while (current) {
-                            n.add(current.key);
-                            current = analysis.topics.find((x) => x.key === current?.parentKey);
-                          }
-                        } else {
-                          n.delete(t.key);
-                          let changed = true;
-                          while (changed) {
-                            changed = false;
-                            for (const child of analysis.topics)
-                              if (child.parentKey && !n.has(child.parentKey) && n.has(child.key)) {
-                                n.delete(child.key);
-                                changed = true;
-                              }
-                          }
-                        }
-                        return n;
-                      })
-                    }
-                  />
-                  <span>
-                    <strong>{t.title}</strong>
-                    <small>
-                      {t.section || 'Conteúdo programático'} · p. {t.page} · confiança{' '}
-                      {pct(t.confidence * 100)}
-                    </small>
-                  </span>
-                  <button
-                    type="button"
-                    className="text-link"
-                    onClick={() => openDocument(selected, t.page, t.excerpt)}
-                  >
-                    Ver no edital
-                    <ExternalLink size={13} />
-                  </button>
-                </label>
-              ))
-            ) : (
-              <p className="muted">
-                Não foi possível reconhecer uma estrutura hierárquica. Consulte o original e
-                cadastre ou corrija o conteúdo em Disciplinas.
-              </p>
-            )}
-          </div>
-          <Button
-            onClick={async () => {
-              const result = await mutate(
-                () =>
-                  send(`/documents/${selected}/apply-analysis`, {
-                    role,
-                    fields: analysis.facts.map((f) => f.field),
-                    topicKeys: [...selectedKeys],
-                  }),
-                'Sugestões salvas para conferência. Os dados do concurso ainda não foram alterados.',
-              );
-              if (result) setAnalysis(undefined);
-            }}
-          >
-            <Plus size={16} />
-            Salvar sugestões para conferência
-          </Button>
-        </Card>
+        </>
       )}
-      {!!syllabusComparison(state, contest.id).length && (
-        <Card title="Conteúdo programático × meus estudos" className="section-gap">
-          <p>
-            A comparação considera apenas os conteúdos selecionados do edital. Uma disciplina
-            estudada de forma geral não conclui automaticamente seus tópicos.
-          </p>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Disciplina / tópico exigido</th>
-                  <th>Meus estudos</th>
-                  <th>Origem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {syllabusComparison(state, contest.id).map((row) => (
-                  <tr key={row.item.id}>
-                    <td>
-                      {row.path.join(' › ')}
-                      <SyllabusMatch item={row.item} />
-                    </td>
-                    <td>
-                      {coverageLabels[row.status as keyof typeof coverageLabels]}
-                      {!row.topic && ' · sem tópico associado'}
-                      {row.topic && !row.topic.verified && (
-                        <small className="table-sub">Confira a extração com o original</small>
-                      )}
-                    </td>
-                    <td>
-                      <button
-                        className="text-link"
-                        onClick={() =>
-                          openDocument(row.item.document_id, row.item.page, row.item.excerpt)
-                        }
-                      >
-                        Página {row.item.page}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-      <Card title="3. Confira as informações e alterações" className="section-gap">
-        <p className="muted">
-          Cada confirmação atualiza o concurso e guarda a alteração no histórico. Campos ausentes:
-          Não identificado automaticamente — consulte o original.
-        </p>
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Informação</th>
-                <th>Valor extraído</th>
-                <th>Origem</th>
-                <th>Conferência</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(factLabels).map(([field, label]) => {
-                const rows = facts.filter((f) => f.field === field);
-                if (!rows.length)
-                  return (
-                    <tr key={field}>
-                      <td>{label}</td>
-                      <td className="muted">Não identificado automaticamente</td>
-                      <td>—</td>
-                      <td>—</td>
-                    </tr>
-                  );
-                return rows.map((f) => (
-                  <tr key={f.id}>
-                    <td>
-                      {label}
-                      {f.previous_value && (
-                        <small className="table-sub">Anterior: {f.previous_value}</small>
-                      )}
-                    </td>
-                    <td>
-                      {field === 'exam_date' && /^\d{4}-\d{2}-\d{2}$/.test(f.value)
-                        ? formatDate(f.value)
-                        : f.value}
-                      {rows.filter((r) => r.status !== 'rejected').length > 1 && (
-                        <small className="warning-text">
-                          Mais de um valor encontrado: confira o documento e eventuais retificações.
-                        </small>
-                      )}
-                      <small className="table-sub">
-                        Confiança: {pct(f.confidence * 100)}
-                        {f.status === 'pending' ? ' · Informação não confirmada' : ''}
-                      </small>
-                    </td>
-                    <td>
-                      <button
-                        className="text-link"
-                        onClick={() => openDocument(f.document_id, f.page, f.excerpt)}
-                      >
-                        Página {f.page}
-                        <ExternalLink size={13} />
-                      </button>
-                      <small className="table-sub">
-                        {state.documents.find((d) => d.id === f.document_id)?.name}
-                      </small>
-                    </td>
-                    <td>
-                      {f.status === 'pending' ? (
-                        <div className="row-actions">
-                          <Button
-                            variant="secondary"
-                            onClick={() =>
-                              mutate(
-                                () =>
-                                  send(
-                                    `/facts/${f.id}`,
-                                    { value: f.value, status: 'confirmed' },
-                                    'PUT',
-                                  ),
-                                'Informação confirmada e histórico preservado',
-                              )
-                            }
-                          >
-                            <Check size={14} />
-                            Confirmar
-                          </Button>
-                          <Button variant="ghost" onClick={() => setEditFact(f)}>
-                            Corrigir
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            title="Rejeitar informação"
-                            onClick={() =>
-                              mutate(() =>
-                                send(
-                                  `/facts/${f.id}`,
-                                  { value: f.value, status: 'rejected' },
-                                  'PUT',
-                                ),
-                              )
-                            }
-                          >
-                            <X size={14} />
-                          </Button>
-                        </div>
-                      ) : (
-                        <Badge tone={f.status === 'rejected' ? 'red' : 'green'}>
-                          {f.status === 'rejected'
-                            ? 'Rejeitada'
-                            : f.status === 'corrected'
-                              ? 'Corrigida'
-                              : 'Confirmada'}
-                        </Badge>
-                      )}
-                    </td>
-                  </tr>
-                ));
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
       {importing && (
         <ImportPdf
           initialKind="notice"
@@ -679,14 +653,24 @@ export function NoticeAnalysis() {
           onImported={(id) => {
             setSelected(id);
             setAnalysis(undefined);
+            setTab('summary');
           }}
         />
       )}
       {editFact && (
         <Editor
           title={`Corrigir ${factLabels[editFact.field] || editFact.field}`}
-          description={`Trecho original: ${editFact.excerpt}`}
-          fields={[{ key: 'value', label: 'Valor correto', required: true }]}
+          description={`Fonte: página ${editFact.page}. ${editFact.field === 'question_distribution' ? 'Use uma matéria ou grupo por linha: Direito Civil: 20 questões.' : ''}`}
+          fields={[
+            {
+              key: 'value',
+              label: 'Valor correto',
+              required: true,
+              type: ['schedule', 'question_distribution'].includes(editFact.field)
+                ? 'textarea'
+                : 'text',
+            },
+          ]}
           initial={{ value: editFact.value }}
           onClose={() => setEditFact(undefined)}
           onSave={async (v) => {
@@ -1069,6 +1053,9 @@ function SyllabusMatch({ item }: { item: SyllabusItem }) {
   const { state, mutate } = useApp();
   const [editing, setEditing] = useState(false),
     [topicId, setTopicId] = useState(item.topic_id || '');
+  const matchingOptions = new Map(
+    topicOptions(state.topics, item.contest_id, false).map((o) => [o.value, o.label]),
+  );
   if (!editing)
     return (
       <div>
@@ -1093,10 +1080,7 @@ function SyllabusMatch({ item }: { item: SyllabusItem }) {
           )
           .map((t) => (
             <option key={t.id} value={t.id}>
-              {
-                topicOptions(state.topics, item.contest_id, false).find((o) => o.value === t.id)
-                  ?.label
-              }
+              {matchingOptions.get(t.id)}
             </option>
           ))}
       </select>
@@ -1116,5 +1100,15 @@ function SyllabusMatch({ item }: { item: SyllabusItem }) {
         Cancelar
       </Button>
     </div>
+  );
+}
+
+function NoticeFold({ children }: { children: React.ReactNode[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="notice-fold" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      {children[0]}
+      {open && children.slice(1)}
+    </details>
   );
 }

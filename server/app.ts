@@ -13,7 +13,7 @@ import {
 import path from 'node:path';
 import { zipSync, unzipSync, strToU8 } from 'fflate';
 import { Store, id, migrateDatabase } from './db.js';
-import { disciplineKey, normalizeTitle } from '../shared/catalog.js';
+import { disciplineKey, normalizeTitle, isAdministrativeHeading } from '../shared/catalog.js';
 import { analyzeNotice, suggestMatches } from '../shared/analyzer.js';
 import { addDays, dayKey, descendants, statistics, ancestry } from '../shared/domain.js';
 import type {
@@ -196,6 +196,22 @@ function validateEntity(s: Store, table: Table, v: Record<string, unknown>, key?
   if (v.topic_id) {
     const topic = requireRow<Topic>(s, 'topics', String(v.topic_id));
     if (v.contest_id && topic.contest_id !== v.contest_id) fail('Tópico pertence a outro concurso');
+  }
+  if (table === 'blocks') {
+    if (
+      v.topic_id &&
+      !(() => {
+        const t = requireRow<Topic>(s, 'topics', String(v.topic_id));
+        return (
+          t.kind === 'discipline' && !(t.source_document_id && isAdministrativeHeading(t.title))
+        );
+      })()
+    )
+      fail(
+        'Escolha apenas uma disciplina para o bloco. Os tópicos são avaliados durante o estudo.',
+      );
+    if (!v.topic_id && !['cycle_questions', 'mock'].includes(String(v.kind)))
+      fail('Selecione a disciplina do bloco');
   }
   if (table === 'sessions' && v.block_id) {
     const block = requireRow<Block>(s, 'blocks', String(v.block_id));
@@ -854,6 +870,57 @@ export async function createApp(dataDir: string, frontendDir?: string) {
       });
     });
     res.json({ ok: true });
+  });
+  app.post('/api/blocks/disciplines', (req, res) => {
+    const v = z
+      .object({
+        contest_id: uuid,
+        discipline_ids: z.array(uuid).min(1).max(100),
+        minutes: positive.max(180),
+        kind: z.enum(['theory', 'review', 'questions']).default('theory'),
+      })
+      .parse(req.body);
+    requireRow(store, 'contests', v.contest_id);
+    if (new Set(v.discipline_ids).size !== v.discipline_ids.length)
+      fail('Selecione cada disciplina uma vez');
+    const disciplines = v.discipline_ids.map((key) => requireRow<Topic>(store, 'topics', key));
+    if (
+      disciplines.some(
+        (t) =>
+          t.contest_id !== v.contest_id ||
+          t.kind !== 'discipline' ||
+          (!!t.source_document_id && isAdministrativeHeading(t.title)),
+      )
+    )
+      fail('Selecione apenas disciplinas deste plano');
+    const start = Number(
+      store.one<{ position: number }>(
+        'SELECT COALESCE(MAX(position),-1)+1 AS position FROM blocks WHERE contest_id=?',
+        [v.contest_id],
+      )?.position || 0,
+    );
+    const ids: string[] = [];
+    store.transaction(() => {
+      disciplines.forEach((t, index) => {
+        const key = id(),
+          value = {
+            contest_id: v.contest_id,
+            topic_id: t.id,
+            title: t.title,
+            minutes: v.minutes,
+            kind: v.kind,
+            position: start + index,
+          };
+        store.insert('blocks', { id: key, ...value });
+        store.audit('blocks', key, 'created', null, value);
+        ids.push(key);
+      });
+      store.run(
+        'INSERT INTO cycles(contest_id,block_id,lap) VALUES(?,?,0) ON CONFLICT(contest_id) DO UPDATE SET block_id=excluded.block_id WHERE cycles.block_id IS NULL',
+        [v.contest_id, ids[0]],
+      );
+    });
+    res.status(201).json({ ids });
   });
   app.post('/api/blocks/reorder', (req, res) => {
     const v = z.object({ contest_id: uuid, ids: z.array(uuid) }).parse(req.body);

@@ -36,15 +36,17 @@ Nesse modo, a interface é servida na porta `4318`. O serviço escuta apenas na 
 
 ## Primeiro uso
 
+A análise tem duas abas. **Resumo do concurso** destaca somente órgão, banca, cargo, prova/cronograma, vagas, total de questões, distribuição por matéria/grupo e inscrição (página e valor). **Matérias do edital** mostra as disciplinas com os tópicos recolhidos. Fontes e correções ficam no botão **Conferir**, e os detalhes abrem sob demanda.
+
 1. Clique em **Cadastrar minhas disciplinas**. Selecione as matérias que você estuda no catálogo jurídico e/ou digite uma disciplina personalizada. Nenhum edital ou concurso é obrigatório.
 2. Em **Disciplinas**, adicione assuntos e subassuntos, informando o que já estudou. Esses registros serão preservados ao analisar um edital.
-3. Monte **Meu Ciclo** com as disciplinas e tópicos cadastrados. As atividades **Exercícios do Ciclo** e **SIMULADO** têm atalhos próprios. Registre sessões no bloco ou conclua os blocos que efetivamente estudou.
-4. **Opcional:** em **Analisar Edital**, importe o edital, anexos ou retificações. Use OCR para digitalizações. Revise a extração e salve as sugestões; dados do concurso só mudam quando você confirma ou corrige cada informação.
-5. Confira **Conteúdo programático × meus estudos**. O confronto e os **Pontos que precisam de atenção** usam apenas exigências do edital, com página e trecho. Nomes equivalentes de disciplinas são reconhecidos; tópicos diferentes podem ser associados manualmente. Uma disciplina geral estudada não conclui automaticamente todos os seus tópicos.
+3. Monte **Meu Ciclo** escolhendo somente disciplinas: use **Escolher disciplinas** para marcar várias ou **Adicionar bloco** para selecionar uma. As atividades **Exercícios do Ciclo** e **SIMULADO** têm atalhos próprios. Registre sessões no bloco ou conclua os blocos que efetivamente estudou.
+4. **Opcional:** em **Analisar Edital**, importe o edital, anexos ou retificações. Use OCR para digitalizações. Confira as abas **Resumo do concurso** e **Matérias do edital** e clique em **Salvar análise**; dados do concurso só mudam quando você confirma ou corrige cada informação.
+5. Em **Matérias do edital**, abra uma disciplina para conferir os tópicos e compará-los aos seus estudos. O confronto e os **Pontos que precisam de atenção** usam apenas exigências do edital, com página e trecho. Nomes equivalentes de disciplinas são reconhecidos; tópicos diferentes podem ser associados manualmente. Uma disciplina geral estudada não conclui automaticamente todos os seus tópicos.
 6. Em **Exercícios do Ciclo**, consulte disciplinas/tópicos realmente estudados na volta atual ou em uma anterior. Registre questões diretamente nos conteúdos indicados; blocos planejados, adiados, simulados e sessões de questões não são tratados como teoria estudada.
 7. Importe apostilas na **Biblioteca de PDFs**, confirme correspondências, registre páginas, programe revisões e acompanhe desempenho e hábitos. **Meus Concursos** continua disponível para cadastrar um concurso com nome, cargo, data e metas.
 
-Para atualizar a partir da versão 1.0, feche o aplicativo antigo e abra o executável novo no mesmo usuário do Windows. O programa usa o mesmo diretório de dados e migra o SQLite, guardando uma cópia anterior em `data/backups/`. Backups completos da versão 1.0 continuam aceitos. Registros antigos de tempo permanecem no histórico geral; a identificação da volta começa nos novos registros, pois a versão anterior não guardava essa informação.
+Para atualizar a partir de uma versão anterior, feche o aplicativo antigo e abra o executável novo no mesmo usuário do Windows. O programa usa o mesmo diretório de dados e migra o SQLite, guardando uma cópia anterior em `data/backups/`. Backups completos da versão 1.0 continuam aceitos. Registros antigos de tempo permanecem no histórico geral; a identificação da volta começa nos novos registros, pois a versão anterior não guardava essa informação.
 
 ## Regras dos indicadores
 
@@ -112,9 +114,9 @@ npm test
 npm run dist:win
 ```
 
-A saída esperada do build nativo bem-sucedido é `release/Cronograma de Estudos Setup 1.1.0.exe`, instalador NSIS para Windows x64, com escolha de diretório. A configuração está em `package.json`. O workflow `.github/workflows/windows.yml` gera a versão portátil Windows usando um runner Linux, por acionamento manual, uma tag `v*` ou um ramo `release/windows-*`. Tags e ramos de release publicam o executável e o ZIP em GitHub Releases; o acionamento manual disponibiliza os arquivos como artefatos do workflow. O instalador NSIS deve ser gerado separadamente no Windows.
+A saída esperada do build nativo bem-sucedido é `release/Cronograma de Estudos Setup 1.2.0.exe`, instalador NSIS para Windows x64, com escolha de diretório. A configuração está em `package.json`. O workflow `.github/workflows/windows.yml` gera a versão portátil Windows usando um runner Linux, por acionamento manual, uma tag `v*` ou um ramo `release/windows-*`. Tags e ramos de release publicam o executável e o ZIP em GitHub Releases; o acionamento manual disponibiliza os arquivos como artefatos do workflow. O instalador NSIS deve ser gerado separadamente no Windows.
 
-Para uma versão Windows portátil, sem instalação, use `npm run dist:win:portable`. A saída é `release/Cronograma de Estudos 1.1.0.exe`.
+Para uma versão Windows portátil, sem instalação, use `npm run dist:win:portable`. A saída é `release/Cronograma de Estudos 1.2.0.exe`.
 
 Para gerar o instalador Windows a partir de Linux com electron-builder 26.15, use o toolset Wine suportado, com verificação de checksum:
 

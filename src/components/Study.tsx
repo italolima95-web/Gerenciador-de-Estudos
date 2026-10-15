@@ -1,3 +1,4 @@
+import { studyTopics } from '../../shared/catalog';
 import { cycleExerciseScope } from '../../shared/comparison';
 import { AttemptEditor, MixedSession } from './Practice';
 import { useEffect, useState } from 'react';
@@ -26,7 +27,7 @@ import { api, send, duration, formatDate } from '../lib/api';
 import { dayKey, ancestry } from '../../shared/domain';
 import type { Block, Review, Timer, StudySession } from '../../shared/types';
 import { topicOptions } from './Curriculum';
-import { Button, Card, PageTitle, Empty, Editor, Badge, type Field } from './UI';
+import { Button, Card, PageTitle, Empty, Editor, Badge, Modal, type Field } from './UI';
 export const kindLabels: Record<string, string> = {
   theory: 'Teoria',
   review: 'Revisão',
@@ -115,6 +116,7 @@ export function StudyEntry({
 }
 export function Cycle() {
   const { state, contest, mutate, refresh, notify, navigate } = useApp();
+  const [choosing, setChoosing] = useState(false);
   const [editing, setEditing] = useState<Block | 'new'>(),
     [logging, setLogging] = useState<Block>(),
     [history, setHistory] = useState(false);
@@ -147,6 +149,7 @@ export function Cycle() {
         description="Uma sequência contínua que se adapta à sua rotina. Termine um bloco e siga em frente."
         action={
           <div className="row-actions">
+            <Button onClick={() => setChoosing(true)}>Escolher disciplinas</Button>
             <Button
               variant="secondary"
               onClick={() =>
@@ -223,14 +226,16 @@ export function Cycle() {
               <div className="cycle-number">{String(i + 1).padStart(2, '0')}</div>
               <div className="cycle-block-content">
                 <div className="row-actions">
-                  <h2>{b.title}</h2>
+                  <h2>
+                    {b.topic_id && !['mock', 'cycle_questions'].includes(b.kind)
+                      ? ancestry(state.topics, b.topic_id)[0]?.title || b.title
+                      : b.title}
+                  </h2>
                   {b.id === current?.id && <Badge tone="green">Você está aqui</Badge>}
                 </div>
                 <p>
                   {b.topic_id
-                    ? ancestry(state.topics, b.topic_id)
-                        .map((t) => t.title)
-                        .join(' › ')
+                    ? ancestry(state.topics, b.topic_id)[0]?.title || 'Disciplina'
                     : b.kind === 'cycle_questions'
                       ? 'Disciplinas e tópicos estudados na volta selecionada, listados acima'
                       : 'Sem tópico associado'}
@@ -388,16 +393,24 @@ export function Cycle() {
           </div>
         </Card>
       )}
+      {choosing && <CycleDisciplinePicker onClose={() => setChoosing(false)} />}
       {editing && (
         <Editor
           title={editing === 'new' ? 'Novo bloco de estudo' : 'Editar bloco'}
+          description="Escolha a disciplina. Os assuntos e tópicos serão avaliados depois, durante seus estudos."
           fields={[
-            { key: 'title', label: 'Nome do bloco', required: true },
             {
               key: 'topic_id',
-              label: 'Disciplina ou tópico',
+              label: 'Disciplina do bloco',
               type: 'select',
-              options: topicOptions(state.topics, contest.id),
+              required: true,
+              hidden: (v) => ['mock', 'cycle_questions'].includes(String(v.kind)),
+              options: [
+                { value: '', label: 'Escolha uma disciplina' },
+                ...studyTopics(state.topics, contest.id)
+                  .filter((t) => t.kind === 'discipline')
+                  .map((t) => ({ value: t.id, label: t.title })),
+              ],
             },
             {
               key: 'minutes',
@@ -419,7 +432,12 @@ export function Cycle() {
           initial={
             editing === 'new'
               ? { minutes: 25, kind: 'theory', topic_id: '' }
-              : { ...editing, topic_id: editing.topic_id || '' }
+              : {
+                  ...editing,
+                  topic_id: editing.topic_id
+                    ? ancestry(state.topics, editing.topic_id)[0]?.id || ''
+                    : '',
+                }
           }
           onClose={() => setEditing(undefined)}
           onSave={async (v) => {
@@ -432,9 +450,11 @@ export function Cycle() {
                     ? 'Exercícios do Ciclo'
                     : v.kind === 'mock'
                       ? 'SIMULADO'
-                      : v.title,
+                      : state.topics.find((t) => t.id === v.topic_id)?.title || '',
                 contest_id: contest.id,
-                topic_id: v.kind === 'cycle_questions' ? null : v.topic_id || null,
+                topic_id: ['cycle_questions', 'mock'].includes(String(v.kind))
+                  ? null
+                  : v.topic_id || null,
                 position: editing === 'new' ? blocks.length : editing.position,
               },
               editing === 'new' ? 'POST' : 'PUT',
@@ -446,6 +466,111 @@ export function Cycle() {
       )}
       {logging && <StudyEntry block={logging} onClose={() => setLogging(undefined)} />}
     </>
+  );
+}
+function CycleDisciplinePicker({ onClose }: { onClose: () => void }) {
+  const { state, contest, refresh, notify, navigate } = useApp();
+  const [chosen, setChosen] = useState<string[]>([]),
+    [minutes, setMinutes] = useState(25),
+    [kind, setKind] = useState('theory'),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  if (!contest) return null;
+  const disciplines = studyTopics(state.topics, contest.id).filter((t) => t.kind === 'discipline');
+  return (
+    <Modal title="Escolher disciplinas para o ciclo" onClose={onClose}>
+      <p>
+        Marque as disciplinas que você quer estudar. Cada escolha cria um bloco; os tópicos ficam
+        para a avaliação posterior.
+      </p>
+      {disciplines.length ? (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            setError('');
+            try {
+              if (!chosen.length) throw Error('Selecione ao menos uma disciplina.');
+              await send('/blocks/disciplines', {
+                contest_id: contest.id,
+                discipline_ids: chosen,
+                minutes,
+                kind,
+              });
+              await refresh();
+              notify('Disciplinas adicionadas ao ciclo');
+              onClose();
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <div className="catalog-grid">
+            {disciplines.map((t) => (
+              <label className="check-row" key={t.id}>
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(t.id)}
+                  onChange={(e) =>
+                    setChosen((old) =>
+                      e.target.checked ? [...old, t.id] : old.filter((id) => id !== t.id),
+                    )
+                  }
+                />
+                {t.title}
+              </label>
+            ))}
+          </div>
+          <div className="form-grid">
+            <label className="field">
+              Minutos por disciplina
+              <input
+                type="number"
+                min={1}
+                max={180}
+                required
+                value={minutes}
+                onChange={(e) => setMinutes(Number(e.target.value))}
+              />
+            </label>
+            <label className="field">
+              Atividade dos blocos
+              <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                {['theory', 'review', 'questions'].map((value) => (
+                  <option key={value} value={value}>
+                    {kindLabels[value]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
+          <div className="modal-footer">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy ? 'Salvando…' : 'Adicionar disciplinas selecionadas'}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <Button
+          onClick={() => {
+            onClose();
+            navigate('Disciplinas');
+          }}
+        >
+          Cadastrar minhas disciplinas
+        </Button>
+      )}
+    </Modal>
   );
 }
 export function CycleExercises({ lap }: { lap: number }) {

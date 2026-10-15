@@ -1,4 +1,4 @@
-import { disciplineCatalog, disciplineKey } from '../../shared/catalog';
+import { disciplineCatalog, disciplineKey, studyTopics } from '../../shared/catalog';
 import { syllabusCoverage } from '../../shared/comparison';
 import { useState } from 'react';
 import {
@@ -39,14 +39,12 @@ export const coverageLabels = {
 export function topicOptions(topics: Topic[], contestId: string, includeEmpty = true) {
   return [
     ...(includeEmpty ? [{ value: '', label: 'Sem classificação' }] : []),
-    ...topics
-      .filter((t) => t.contest_id === contestId)
-      .map((t) => ({
-        value: t.id,
-        label: ancestry(topics, t.id)
-          .map((p) => p.title)
-          .join(' › '),
-      })),
+    ...studyTopics(topics, contestId).map((t) => ({
+      value: t.id,
+      label: ancestry(topics, t.id)
+        .map((p) => p.title)
+        .join(' › '),
+    })),
   ];
 }
 export default function Curriculum() {
@@ -68,7 +66,7 @@ export default function Curriculum() {
         <DisciplineCatalog onClose={() => {}} inline />
       </>
     );
-  const topics = state.topics.filter((t) => t.contest_id === contest.id),
+  const topics = studyTopics(state.topics, contest.id),
     cov = syllabusCoverage(state, contest.id);
   const filtered = (t: Topic): boolean => {
     const own =

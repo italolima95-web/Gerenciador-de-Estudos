@@ -65,7 +65,24 @@ test('fluxo real: disciplinas sem edital, comparação, leitura, exercícios por
   await page.getByRole('button', { name: 'Analisar Edital', exact: true }).click();
   await page.getByRole('button', { name: 'Importar edital ou retificação' }).click();
   const pdf = makePdf([
-    ['EDITAL 01/2026', 'Data da prova: 20/12/2026'],
+    [
+      'EDITAL 01/2026',
+      'Órgão: Tribunal de Justiça de Teste',
+      'Banca: Banca de Teste',
+      'Cargo: Analista',
+      'Vagas: 20',
+      'Quantidade de questões: 100',
+      'Data da prova: 20/12/2026',
+      'Taxa de inscrição: R$ 300,00',
+      'Inscrições: https://example.org/inscricao',
+      'QUADRO DE PROVAS',
+      'Matérias | Questões',
+      'Direito Civil | 20',
+      'Processo Penal | 30',
+      'Português | 50',
+      'CRONOGRAMA',
+      'Prova objetiva: 20/12/2026',
+    ],
     [
       'CONTEÚDO PROGRAMÁTICO',
       'DIREITO CIVIL',
@@ -84,24 +101,45 @@ test('fluxo real: disciplinas sem edital, comparação, leitura, exercícios por
   await page.getByRole('button', { name: 'Importar e extrair texto' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 30000 });
   await page.getByRole('button', { name: 'Analisar documento', exact: true }).click();
-  await expect(page.getByText('1. Crase', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('Crase', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Salvar sugestões para conferência' }).click();
-  await expect(page.getByRole('cell', { name: /^20\/12\/2026/ })).toBeVisible();
-  await expect(
-    page.getByRole('heading', { name: 'Conteúdo programático × meus estudos' }),
-  ).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Resumo do concurso' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(page.getByText('Crase', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('20/12/2026', { exact: true })).toBeVisible();
+  await expect(page.getByText('Remuneração', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.notice-fact')).toHaveCount(8);
+  await expect(page.getByRole('article', { name: 'Órgão', exact: true })).toContainText(
+    'Tribunal de Justiça de Teste',
+  );
+  await expect(page.getByRole('link', { name: 'Acessar página de inscrição' })).toHaveAttribute(
+    'href',
+    'https://example.org/inscricao',
+  );
   await expect(
     page
       .getByRole('row')
-      .filter({ has: page.getByRole('cell', { name: /^DIREITO CIVIL › Pessoas\./ }) })
+      .filter({ has: page.getByRole('cell', { name: 'Direito Civil', exact: true }) })
+      .getByRole('cell', { name: '20', exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: 'test-results/resumo-edital.png', fullPage: true });
+  await page.getByRole('tab', { name: /Matérias do edital/ }).click();
+  await expect(page.getByText('Crase', { exact: true })).not.toBeVisible();
+  await page.locator('.notice-fold summary').filter({ hasText: 'PORTUGUÊS' }).click();
+  await expect(page.getByText('Crase', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Salvar análise', exact: true }).click();
+  await page.locator('.notice-fold summary').filter({ hasText: 'DIREITO CIVIL' }).click();
+  await expect(
+    page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: /^Pessoas\./ }) })
       .getByRole('cell', { name: 'Estudado', exact: true }),
   ).toBeVisible();
-  await page
-    .getByRole('button', { name: 'Confirmar', exact: true })
-    .filter({ hasText: 'Confirmar' })
-    .last()
-    .click();
+  await page.screenshot({ path: 'test-results/materias-edital.png', fullPage: true });
+  await page.getByRole('tab', { name: 'Resumo do concurso', exact: true }).click();
+  await page.getByRole('button', { name: 'Conferir data da prova', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Fechar', exact: true }).click();
   await page.getByRole('button', { name: 'Disciplinas', exact: true }).click();
   await page.getByRole('button', { name: 'Expandir PORTUGUÊS' }).click();
   await page.getByRole('button', { name: 'Conferir com o Edital Original' }).first().click();
@@ -127,8 +165,10 @@ test('fluxo real: disciplinas sem edital, comparação, leitura, exercícios por
   await expect(page.getByText('60% sobre 10 apresentadas')).toBeVisible();
   await page.getByRole('button', { name: 'Meu Ciclo', exact: true }).click();
   await page.getByRole('button', { name: 'Adicionar bloco', exact: true }).click();
-  await page.getByLabel('Nome do bloco').fill('Revisar crase');
-  await page.getByLabel('Disciplina ou tópico').selectOption({ label: 'PORTUGUÊS › Crase' });
+  await expect(
+    page.getByLabel('Disciplina do bloco').locator('option').filter({ hasText: 'Crase' }),
+  ).toHaveCount(0);
+  await page.getByLabel('Disciplina do bloco').selectOption({ label: 'PORTUGUÊS' });
   await page.getByRole('dialog').getByRole('button', { name: 'Salvar', exact: true }).click();
   await expect(page.getByText('Você está aqui')).toBeVisible();
   await page.getByRole('button', { name: 'Concluir bloco', exact: true }).click();
@@ -138,7 +178,9 @@ test('fluxo real: disciplinas sem edital, comparação, leitura, exercícios por
     page.getByRole('heading', { name: 'Exercícios do Ciclo — o que estudar nas questões' }),
   ).toBeVisible();
   await page.getByLabel('Volta de referência').selectOption('0');
-  await expect(page.locator('.exercise-scope').getByText('Crase', { exact: true })).toBeVisible();
+  await expect(
+    page.locator('.exercise-scope').getByRole('heading', { name: 'PORTUGUÊS', exact: true }),
+  ).toBeVisible();
   await expect(page.locator('.exercise-scope').getByText('Pessoas', { exact: true })).toHaveCount(
     0,
   );
@@ -146,9 +188,17 @@ test('fluxo real: disciplinas sem edital, comparação, leitura, exercícios por
     .getByRole('button', { name: 'Registrar questões deste conteúdo', exact: true })
     .click();
   await expect(page.getByLabel('Classificação principal').locator('option:checked')).toHaveText(
-    'PORTUGUÊS › Crase',
+    'PORTUGUÊS',
   );
   await page.getByRole('dialog').getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('button', { name: 'Escolher disciplinas', exact: true }).click();
+  await expect(page.getByRole('dialog').getByLabel('Crase', { exact: true })).toHaveCount(0);
+  await page.getByRole('dialog').getByLabel('Direito Civil', { exact: true }).check();
+  await page.getByRole('dialog').getByLabel('Processo Penal', { exact: true }).check();
+  await page
+    .getByRole('button', { name: 'Adicionar disciplinas selecionadas', exact: true })
+    .click();
+  await expect(page.locator('.cycle-block')).toHaveCount(4);
   await page.getByRole('button', { name: 'Revisões', exact: true }).click();
   await page.getByRole('button', { name: 'Programar revisões', exact: true }).click();
   await page.getByLabel('Assunto', { exact: true }).selectOption({ label: 'PORTUGUÊS › Crase' });

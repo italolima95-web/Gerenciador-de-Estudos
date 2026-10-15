@@ -9,6 +9,7 @@ Esta é uma aplicação operacional, sem registros de exemplo na base do usuári
 | Base e interface | React/TypeScript, Electron, tema claro/escuro, 14 seções, layout adaptável, estados vazios e mensagens de erro. |
 | Banco | SQLite em disco, migrações 1 e 2, com cópia anterior à atualização, relacionamentos, validação, chaves estrangeiras, transações e auditoria. |
 | Concursos | Múltiplos objetivos, principal, cargo, banca, data, metadados complementares, meta de acertos e amostra mínima. |
+| Resumo do edital | Duas abas: dados essenciais em cartões e matérias em painéis recolhidos. Extração de cronograma, página de inscrição e questões por matéria/grupo, com fontes e confirmação sob demanda. |
 | Editais | Importação de abertura, anexos, cronogramas e retificações; texto por página; extração local de rótulos, cláusulas narrativas, tabelas identificáveis, datas por extenso e hierarquia com tópicos corridos. |
 | Conferência | Página, documento, seção, trecho e confiança preservados. Botões abrem o original na página de origem. Confirmar/corrigir/rejeitar fatos; tópicos editáveis e confirmação manual. |
 | Retificações | Valores são sugeridos com o anterior e só aplicados após confirmação. Documentos e fatos antigos são mantidos; novos conteúdos não apagam estudos anteriores. |
@@ -25,7 +26,7 @@ Esta é uma aplicação operacional, sem registros de exemplo na base do usuári
 | Simulados | Cadastro e resultados por classificação; integração opcional às estatísticas e edição dessa opção sem criar tentativas duplicadas. |
 | Prontidão | Cobertura, cumprimento de revisões e acertos independentes, inclusive por ramo e período. Sem nota de probabilidade de aprovação. |
 | Recomendações | Lacunas do conteúdo programático frente aos estudos registrados, com fonte no edital. Nenhum metadado, indicador de questões ou revisão entra nos pontos de atenção. Ações para abrir material, registrar questões, ir às revisões, adicionar bloco e ignorar. |
-| Ciclo | Duração e atividade por bloco, disciplinas repetidas, reordenação, posição atual, retorno ao início, voltas e histórico de avanço/adiamento. Exercícios do Ciclo mostram conteúdos realmente estudados em cada volta e abrem o registro de questões com classificação preenchida. |
+| Ciclo | Seleção apenas por disciplina, com inclusão de várias escolhas em uma transação. Os tópicos ficam no acompanhamento posterior. Duração e atividade por bloco, disciplinas repetidas, reordenação, posição atual, retorno ao início, voltas e histórico de avanço/adiamento. Exercícios do Ciclo mostram conteúdos realmente estudados em cada volta e abrem o registro de questões com classificação preenchida. |
 | Pomodoro | Foco/pausas configuráveis, iniciar, pausar, retomar, reiniciar e finalizar; deadline persistente e proteção contra finalização duplicada. Notificação local e sinal sonoro quando disponíveis. |
 | Revisões | Intervalos configuráveis (1/7/30 dias por padrão), associação ao tópico/PDF/páginas, vencimentos, conclusão, dificuldade e duração própria. |
 | Hábitos | Heatmap anual clicável, tempo, pomodoros, leitura, questões, revisões e simulados por dia; sequência, descanso, horas e consistência. |
@@ -50,7 +51,7 @@ Esta é uma aplicação operacional, sem registros de exemplo na base do usuári
 
 ## Evidências de verificação
 
-- `npm test`: **69 testes passaram**, em domínio, API e armazenamento. Os 12 cenários obrigatórios do prompt estão cobertos nos testes nomeados 1–12.
+- `npm test`: **77 testes passaram**, em domínio, API e armazenamento. Os 12 cenários obrigatórios do prompt estão cobertos nos testes nomeados 1–12.
 - `npm run build`: checagem TypeScript e compilação de produção concluídas.
 - `npm run test:e2e`: **2 testes passaram** no Chromium do ambiente, no build de produção, incluindo disciplinas sem edital, importação posterior, confronto com estudo anterior, exercícios por volta e OCR sem serviços externos.
 - `npm run test:desktop`: janela Electron de desenvolvimento abriu, cadastrou e preservou um concurso após reinício.
@@ -59,11 +60,11 @@ Esta é uma aplicação operacional, sem registros de exemplo na base do usuári
 - `npm run format:check`: formatação dos fontes verificada.
 - Os testes criam suas próprias bases temporárias; a base de uso permanece vazia.
 
-O instalador NSIS Windows foi tentado em Linux e encontrou um toolset Wine sem DLLs essenciais (`ntdll`/`kernel32`). O arquivo intermediário pequeno de instalação não é uma entrega válida e foi removido. O workflow nativo Windows e `npm run dist:win` estão preparados para produzir o instalador no sistema de destino. A versão portátil Windows x64 foi gerada com sucesso em `release/Cronograma de Estudos 1.1.0.exe`. O pacote Linux fica em `release/linux-unpacked/`. Gerar um executável Windows não equivale a testá-lo no Windows.
+O instalador NSIS Windows foi tentado em Linux e encontrou um toolset Wine sem DLLs essenciais (`ntdll`/`kernel32`). O arquivo intermediário pequeno de instalação não é uma entrega válida e foi removido. O workflow nativo Windows e `npm run dist:win` estão preparados para produzir o instalador no sistema de destino. A versão portátil Windows x64 foi gerada com sucesso em `release/Cronograma de Estudos 1.2.0.exe`. O pacote Linux fica em `release/linux-unpacked/`. Gerar um executável Windows não equivale a testá-lo no Windows.
 
 ## Artefatos
 
-- `release/Cronograma de Estudos 1.1.0.exe`: versão portátil Windows x64; build concluído, execução nativa Windows não testada.
+- `release/Cronograma de Estudos 1.2.0.exe`: versão portátil Windows x64; build concluído, execução nativa Windows não testada.
 - `release/linux-unpacked/`: aplicação Linux empacotada; inicialização, cadastro e persistência após reinício verificados.
 - `release/cronograma-de-estudos-fonte.zip`: código-fonte, lockfile, documentação e testes; não inclui dependências, dados locais ou binários gerados.
 - `.github/workflows/windows.yml`: publicação automatizada da versão portátil Windows. O instalador NSIS permanece separado.

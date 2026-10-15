@@ -1,3 +1,4 @@
+import { extractNoticeOverview, isAdministrativeHeading } from './notice-overview.js';
 import { disciplineKey, normalizeTitle } from './catalog.js';
 export type ExtractedFact = {
   field: string;
@@ -45,6 +46,9 @@ export const factLabels: Record<string, string> = {
   essay: 'Prova discursiva',
   stages: 'Outras etapas',
   urls: 'Endereços oficiais',
+  registration_url: 'Página de inscrição',
+  question_distribution: 'Questões por matéria',
+  schedule: 'Cronograma',
 };
 const patterns: Record<string, RegExp> = {
   name: /^(?:nome do concurso|concurso público)\s*[:–—-]\s*(.+)/i,
@@ -232,7 +236,12 @@ export function analyzeNotice(pages: string[], selectedRole = '') {
       if (fields[0] && fields.filter(Boolean).length === 1) {
         const value =
           cells.length === 2 ? cells[1] : cells.length === 1 ? rawLines[n + 1] || '' : '';
-        if (value && !tableLabels[normalizeTitle(value)] && !/^\d+(?:\.\d+)*[.)]\s/.test(value))
+        if (
+          value &&
+          !tableLabels[normalizeTitle(value)] &&
+          !/^\d+(?:\.\d+)*[.)]\s/.test(value) &&
+          (fields[0] !== 'questions' || /^\d+(?:\s|$)/.test(value))
+        )
           addFact(
             fields[0],
             value,
@@ -400,6 +409,12 @@ export function analyzeNotice(pages: string[], selectedRole = '') {
         discipline = null;
         last = undefined;
       }
+      if (inSyllabus && isAdministrativeHeading(line)) {
+        inSyllabus = false;
+        discipline = null;
+        last = undefined;
+        numbered.clear();
+      }
       if (
         !inSyllabus ||
         (selectedRole &&
@@ -422,11 +437,29 @@ export function analyzeNotice(pages: string[], selectedRole = '') {
         )
       )
         continue;
+      if (isAdministrativeHeading(line)) {
+        inSyllabus = false;
+        discipline = null;
+        last = undefined;
+        numbered.clear();
+        continue;
+      }
+      // Administrative tables are never syllabus headings or study topics.
+      if (/(?:disciplinas?|mat[eé]rias?).*(?:quest[oõ]es|peso|pontua[cç][aã]o)/i.test(line)) {
+        inSyllabus = false;
+        discipline = null;
+        last = undefined;
+        continue;
+      }
       const customHeading =
         !heading &&
         line.length < 90 &&
         /^[A-ZÀ-Ý][A-ZÀ-Ý /()–—-]+:?$/.test(line) &&
         !/^\d/.test(raw);
+      if (customHeading && discipline) {
+        push(line.replace(/:$/, ''), 'subject', discipline, index + 1, raw, 0.65);
+        continue;
+      }
       if (heading || customHeading) {
         const title = heading?.[0].trim() || line.replace(/:$/, '');
         const existing = topics.find(
@@ -478,7 +511,7 @@ export function analyzeNotice(pages: string[], selectedRole = '') {
     }
   }
   return {
-    facts,
+    facts: [...facts, ...extractNoticeOverview(pages, selectedRole)],
     roles: [...roles],
     topics,
     warning:

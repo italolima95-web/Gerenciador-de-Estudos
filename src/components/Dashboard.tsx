@@ -23,6 +23,7 @@ import { useApp } from '../lib/context';
 import { pct, duration, formatDate, send } from '../lib/api';
 import {
   coverage,
+  ancestry,
   statistics,
   reviewStats,
   recommendations,
@@ -84,8 +85,8 @@ export function Recommendations({ limit = 5 }: { limit?: number }) {
                         () =>
                           send('/blocks', {
                             contest_id: contest.id,
-                            topic_id: r.topic.id,
-                            title: r.topic.title,
+                            topic_id: ancestry(state.topics, r.topic.id)[0]?.id || r.topic.id,
+                            title: ancestry(state.topics, r.topic.id)[0]?.title || r.topic.title,
                             minutes: 25,
                             kind: r.action.startsWith('Revisar') ? 'review' : 'theory',
                             position: state.blocks.filter((b) => b.contest_id === contest.id)

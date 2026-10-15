@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { analyzeNotice, noticeDates } from '../shared/analyzer.js';
-import { disciplineKey, disciplineCatalog } from '../shared/catalog.js';
+import { disciplineKey, disciplineCatalog, studyTopics } from '../shared/catalog.js';
 import { syllabusComparison, syllabusCoverage, cycleExerciseScope } from '../shared/comparison.js';
 import { recommendations } from '../shared/domain.js';
 import type { State, Topic, SyllabusItem, StudySession, Contest } from '../shared/types.js';
@@ -252,4 +252,62 @@ describe('Conteúdos para Exercícios do Ciclo', () => {
     expect(cycleExerciseScope(a, 'c', 0)[0].path).toEqual(['Direito Penal']);
     expect(cycleExerciseScope(a, 'c', 5)).toEqual([]);
   });
+});
+
+describe('Resumo administrativo separado do conteúdo programático', () => {
+  it('extrai questões por matéria com coluna de peso sem confundir números', () => {
+    const a = analyzeNotice([
+      'QUADRO DE PROVAS\nDisciplina\tNúmero de questões\tPeso\nDireito Civil\t20\t2\nDireito Penal\t15\t1\nTotal\t35\t3\nCONTEÚDO PROGRAMÁTICO\nDIREITO CIVIL\n1. Contratos\nDIREITO PENAL\n1. Crimes contra a honra',
+    ]);
+    expect(a.facts.find((f) => f.field === 'question_distribution')?.value).toBe(
+      'Direito Civil: 20 questões\nDireito Penal: 15 questões',
+    );
+    expect(a.topics.map((t) => t.title)).toEqual([
+      'DIREITO CIVIL',
+      'Contratos',
+      'DIREITO PENAL',
+      'Crimes contra a honra',
+    ]);
+  });
+  it('cronograma, taxa e inscrições depois do programa não viram disciplinas nem tópicos', () => {
+    const a = analyzeNotice([
+      'CONTEÚDO PROGRAMÁTICO\nDIREITO CIVIL\n1. Contratos\nCRONOGRAMA\nInscrições: 01/11/2026 a 30/11/2026\nProva objetiva: 31/01/2027\nINSCRIÇÕES\nInscrições pelo endereço https://banca.example/inscricao\nTaxa de inscrição: R$ 300,00',
+    ]);
+    expect(a.topics.map((t) => t.title)).toEqual(['DIREITO CIVIL', 'Contratos']);
+    expect(a.facts.find((f) => f.field === 'schedule')?.value).toContain('31/01/2027');
+    expect(a.facts.find((f) => f.field === 'registration_url')).toMatchObject({
+      value: 'https://banca.example/inscricao',
+      page: 1,
+    });
+  });
+  it('mantém a quantidade por grupo sem atribuí-la a cada disciplina e sem criar conteúdo de estudo', () => {
+    const a = analyzeNotice([
+      'QUADRO DE PROVAS\nMatérias | Questões\nBloco I (Direito Civil e Direito Penal) | 40\nBloco II (Processo Penal e Direitos Humanos) | 30',
+    ]);
+    expect(a.topics).toEqual([]);
+    const value = a.facts.find((f) => f.field === 'question_distribution')?.value || '';
+    expect(value).toContain('Bloco I (Direito Civil e Direito Penal): 40 questões');
+    expect(value).not.toMatch(/^Direito Civil: 40/m);
+  });
+});
+
+it('oculta extração administrativa antiga sem excluir histórico nem impedir disciplina manual personalizada', () => {
+  const rows = [
+    t('d', 'Direito Civil'),
+    t('t', 'Contratos', 'd'),
+    { ...t('bad', 'Cronograma'), source_document_id: 'doc' },
+    t('child', 'Inscrições', 'bad'),
+    t('custom', 'Disciplina personalizada'),
+  ];
+  expect(studyTopics(rows, 'c').map((t) => t.id)).toEqual(['d', 't', 'custom']);
+  expect(rows).toHaveLength(5);
+});
+it('lê cabeçalhos quebrados e o total explícito do quadro de questões', () => {
+  const a = analyzeNotice([
+    'QUADRO DE PROVAS\nDisciplinas\nQuantidade de questões\nDireito Civil 20\nDireito Penal 30\nTotal 50',
+  ]);
+  expect(a.facts.find((f) => f.field === 'question_distribution')?.value).toContain(
+    'Direito Civil: 20 questões',
+  );
+  expect(a.facts.find((f) => f.field === 'questions')?.value).toBe('50');
 });

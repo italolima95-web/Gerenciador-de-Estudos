@@ -315,9 +315,11 @@ describe('Questões, ciclos e revisões', () => {
     expect(data.session_links).toHaveLength(1);
   });
   it('completa o último bloco, volta ao primeiro e preserva voltas', async () => {
-    const c = await contest();
+    const c = await contest(),
+      discipline = await topic(c);
     const a = await post('/blocks', {
       contest_id: c,
+      topic_id: discipline,
       title: 'A',
       minutes: 25,
       kind: 'theory',
@@ -325,6 +327,7 @@ describe('Questões, ciclos e revisões', () => {
     });
     const b = await post('/blocks', {
       contest_id: c,
+      topic_id: discipline,
       title: 'B',
       minutes: 30,
       kind: 'questions',
@@ -445,9 +448,11 @@ describe('Pomodoro persistente', () => {
 
 describe('Recriação do ciclo', () => {
   it('seleciona o primeiro bloco após excluir todos, preservando as voltas', async () => {
-    const c = await contest();
+    const c = await contest(),
+      discipline = await topic(c);
     const a = await post('/blocks', {
       contest_id: c,
+      topic_id: discipline,
       title: 'Anterior',
       minutes: 25,
       kind: 'theory',
@@ -461,6 +466,7 @@ describe('Recriação do ciclo', () => {
       .send({ confirm: true });
     const b = await post('/blocks', {
       contest_id: c,
+      topic_id: discipline,
       title: 'Novo',
       minutes: 25,
       kind: 'theory',
@@ -536,8 +542,8 @@ describe('Disciplinas primeiro, edital opcional e exercícios por volta', () => 
     const block = (
       await post('/blocks', {
         contest_id: c,
-        topic_id: t,
-        title: 'Pessoas',
+        topic_id: d,
+        title: 'Direito Civil',
         kind: 'theory',
         minutes: 25,
       })
@@ -582,7 +588,7 @@ describe('Disciplinas primeiro, edital opcional e exercícios por volta', () => 
     expect(s.cycle_completions).toHaveLength(1);
     expect(s.cycle_completions![0]).toMatchObject({
       lap: 0,
-      topic_path: ['Direito Civil', 'Pessoas'],
+      topic_path: ['Direito Civil'],
     });
     expect(s.cycles[0].lap).toBe(0);
   });
@@ -635,4 +641,66 @@ it('restaura um backup da versão 1.0 e migra preservando dados', async () => {
     version: 2,
   });
   expect(ctx.store.one('PRAGMA foreign_keys')).toEqual({ foreign_keys: 1 });
+});
+
+describe('Blocos apenas com disciplinas escolhidas', () => {
+  it('rejeita tópicos e blocos sem disciplina; mantém exercícios e simulados como atividades', async () => {
+    const c = await contest(),
+      d = await topic(c, 'Direito Penal'),
+      t = await topic(c, 'Crimes contra a honra', d, 'subject');
+    const value = { contest_id: c, title: 'Teoria', minutes: 25, kind: 'theory' };
+    expect((await post('/blocks', { ...value, topic_id: t })).status).toBe(400);
+    expect((await post('/blocks', value)).status).toBe(400);
+    expect((await post('/blocks', { ...value, topic_id: d })).status).toBe(201);
+    expect(
+      (await post('/blocks', { ...value, kind: 'cycle_questions', title: 'Exercícios do Ciclo' }))
+        .status,
+    ).toBe(201);
+    expect((await post('/blocks', { ...value, kind: 'mock', title: 'SIMULADO' })).status).toBe(201);
+  });
+  it('adiciona somente as disciplinas selecionadas, atomicamente, e preserva posição e volta', async () => {
+    const c = await contest(),
+      d = await topic(c, 'Direito Civil'),
+      p = await topic(c, 'Direito Penal'),
+      t = await topic(c, 'Contratos', d, 'subject');
+    const rejected = await post('/blocks/disciplines', {
+      contest_id: c,
+      discipline_ids: [d, t],
+      minutes: 25,
+    });
+    expect(rejected.status).toBe(400);
+    expect((await state()).blocks).toEqual([]);
+    const res = await post('/blocks/disciplines', {
+      contest_id: c,
+      discipline_ids: [d, p],
+      minutes: 30,
+    });
+    expect(res.status).toBe(201);
+    expect((await state()).blocks.map((b) => b.topic_id)).toEqual([d, p]);
+    const cycle = (await state()).cycles[0];
+    expect(
+      (await post('/blocks/disciplines', { contest_id: c, discipline_ids: [p], minutes: 20 }))
+        .status,
+    ).toBe(201);
+    expect((await state()).cycles[0]).toEqual(cycle);
+  });
+  it('salva resumo administrativo sem criar matérias do quadro de provas como tópicos', async () => {
+    const c = await contest(),
+      doc = await document(c, [
+        'QUADRO DE PROVAS\nMatéria | Questões\nDireito Civil | 20\nCRONOGRAMA\nProva objetiva: 31/01/2027\nInscrições: https://example.org/inscricao\nCONTEÚDO PROGRAMÁTICO\nDIREITO PENAL\n1. Crimes contra o patrimônio',
+      ]);
+    const a = (await post(`/documents/${doc}/analyze`, {})).body;
+    expect(
+      (
+        await post(`/documents/${doc}/apply-analysis`, {
+          fields: a.facts.map((f: { field: string }) => f.field),
+          topicKeys: a.topics.map((t: { key: string }) => t.key),
+        })
+      ).status,
+    ).toBe(200);
+    const s = await state();
+    expect(s.topics.map((t) => t.title)).toEqual(['DIREITO PENAL', 'Crimes contra o patrimônio']);
+    expect(s.facts.some((f) => f.field === 'question_distribution')).toBe(true);
+    expect(s.blocks).toEqual([]);
+  });
 });

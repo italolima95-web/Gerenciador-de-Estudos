@@ -47,3 +47,11 @@ O aplicativo é pessoal e local. SQLite WASM exporta a base inteira por gravaç�
 ## Comparação com o edital
 
 Os pontos de atenção usam somente folhas ativas de `syllabus_items`, confrontadas com a cobertura dos tópicos correspondentes. Disciplinas extras, metadados, datas, desempenho em questões e revisões não entram nessa lista. Tempo registrado indica estudo parcial, sem concluir automaticamente o conteúdo. A comparação e os indicadores de cobertura do edital não usam os tópicos manuais extras como denominador.
+
+## Apresentação e escolha do ciclo (1.2)
+
+`shared/notice-overview.ts` separa cronograma, página de inscrição e distribuição de questões dos tópicos. Os novos campos usam `facts` e sua proveniência, sem alterar o esquema do banco. Contagens de grupos são preservadas como grupos, sem divisão estimada. `NoticeSummary` apresenta apenas os campos essenciais em cartões; dados originais, confirmação, rejeição e correção ficam em um diálogo. A aba de matérias monta os detalhes de uma disciplina apenas ao expandi-la.
+
+Blocos novos de teoria, revisão e questões exigem uma disciplina. O servidor recusa assunto/subassunto como classificação do bloco. A inclusão de várias disciplinas (`POST /api/blocks/disciplines`) valida todas antes de criar os blocos na mesma transação, preservando a posição e a volta atuais. Histórico e blocos antigos não são reescritos; ao editar um bloco antigo, o seletor apresenta a disciplina ancestral. O registro posterior de estudos, questões e revisões continua aceitando tópicos específicos.
+
+`studyTopics` oculta extrações administrativas antigas dos cadastros e seletores de estudo, sem excluir os registros históricos. Disciplinas personalizadas inseridas manualmente são preservadas.
